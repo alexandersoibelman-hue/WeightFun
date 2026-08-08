@@ -13,6 +13,7 @@ import {
   fmtSigned, formatDayLabel, isEditable, keyToDate, progressStats, streakStats, todayKey,
 } from '../calc.js';
 import { card, el, numberField, toast } from '../ui/dom.js';
+import { cancelSave, flushSaves, scheduleSave } from '../ui/autosave.js';
 
 /** How much history the strip shows. Only the first 7 are editable. */
 const STRIP_DAYS = 14;
@@ -246,7 +247,7 @@ function dayButton(key, selectedKey, state) {
     'aria-label': `${formatDayLabel(key)}${editable ? '' : ' (locked)'}`,
     dataset: { day: key },
     title: editable ? formatDayLabel(key) : 'Outside the 7-day entry window',
-    onClick: () => update((s) => { s.ui.selectedDay = key; }),
+    onClick: () => { flushSaves(); update((s) => { s.ui.selectedDay = key; }); },
   }, [
     el('span.day__dow', { text: isToday ? 'TODAY' : dowShort(key) }),
     el('span.day__num', { text: String(keyToDate(key).getDate()) }),
@@ -261,9 +262,30 @@ function dayEditor(key, state) {
   const totals = dayTotals(entry);
   const editable = isEditable(key);
 
-  // Local draft so typing doesn't trigger a re-render (and lose focus) on
-  // every keystroke; committed on Save.
+  // The draft exists so typing doesn't re-render the form under the user's
+  // fingers. It is autosaved silently on a debounce — the store and disk stay
+  // current, only the surrounding cards wait for an explicit Save to redraw.
   const draft = { eaten: entry.manualEaten, burned: entry.manualBurned };
+  const saveKey = `day:${key}`;
+
+  // Live "saved" indicator, so it is visible that nothing needs a button press.
+  const savedNote = el('div.field__hint', {
+    style: { textAlign: 'right', margin: '0' },
+    text: entry.updatedAt ? 'Saved' : 'Saved as you type',
+  });
+  const markSaved = () => {
+    savedNote.textContent = 'Saved';
+    savedNote.style.color = 'var(--accent)';
+    setTimeout(() => { savedNote.style.color = ''; }, 1200);
+  };
+
+  const autosave = () => {
+    savedNote.textContent = 'Saving…';
+    scheduleSave(saveKey, () => {
+      setManualDay(key, { eaten: draft.eaten, burned: draft.burned }, { silent: true });
+      markSaved();
+    });
+  };
 
   const net = el('span.net-row__value');
   const paintNet = () => {
@@ -289,13 +311,13 @@ function dayEditor(key, state) {
 
   if (editable) {
     body.append(
-      numberField('Calories eaten', draft.eaten, (v) => { draft.eaten = v; paintNet(); }, {
+      numberField('Calories eaten', draft.eaten, (v) => { draft.eaten = v; paintNet(); autosave(); }, {
         unit: 'kcal',
         hint: totals.appleEaten > 0
           ? `Adds to the ${fmtNum(totals.appleEaten)} kcal Apple Health synced for this day.`
           : 'Everything you ate and drank.',
       }),
-      numberField('Calories burned', draft.burned, (v) => { draft.burned = v; paintNet(); }, {
+      numberField('Calories burned', draft.burned, (v) => { draft.burned = v; paintNet(); autosave(); }, {
         unit: 'kcal',
         hint: totals.whoopBurned > 0
           ? `Adds to the ${fmtNum(totals.whoopBurned)} kcal Whoop synced for this day.`
@@ -327,12 +349,15 @@ function dayEditor(key, state) {
   ]));
   paintNet();
 
+  if (editable) body.append(savedNote);
+
   if (editable) {
     body.append(el('div.btn-row', { style: { marginTop: '14px' } }, [
       el('button.btn.btn--ghost', {
         type: 'button',
         text: 'Clear',
         onClick: () => {
+          cancelSave(saveKey);
           setManualDay(key, { eaten: null, burned: null });
           toast('Manual entries cleared');
         },
@@ -341,6 +366,8 @@ function dayEditor(key, state) {
         type: 'button',
         text: 'Save day',
         onClick: () => {
+          // Already autosaved; this just confirms it and redraws the totals.
+          cancelSave(saveKey);
           setManualDay(key, { eaten: draft.eaten, burned: draft.burned });
           toast(`Saved ${formatDayLabel(key)}`);
         },

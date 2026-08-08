@@ -169,6 +169,25 @@ Views re-render wholesale on state change. They're small enough that a rebuild
 beats any diffing worth hand-rolling, and it keeps what's on screen a pure
 function of state.
 
+## Saving
+
+Entries persist as you type — a 500 ms debounce writes to `localStorage`, and
+pending writes are flushed on `pagehide`, `visibilitychange`, `beforeunload`,
+and on any navigation within the app. Closing the tab, refreshing, switching
+apps, or iOS killing a backgrounded page all keep what you typed; no button
+press is required.
+
+Autosaves are *silent* — they skip the re-render, because rebuilding a form
+under the user's fingers drops focus mid-keystroke. The data reaches disk
+either way; only the surrounding cards wait for an explicit Save or a
+navigation to redraw.
+
+If a write fails — Safari private browsing is the usual cause, where
+`localStorage` exists but throws — a red banner appears on every screen. Losing
+entries quietly is the worst failure this app has, so it is never left to a
+console warning. Writability is probed at startup, so the warning shows before
+anything is typed rather than after the first lost entry.
+
 ## Data and privacy
 
 Everything the app itself holds stays in `localStorage` on the device, and there

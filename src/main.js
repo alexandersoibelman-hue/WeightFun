@@ -7,9 +7,10 @@
  * "what's on screen" a pure function of state.
  */
 
-import { getState, subscribe, update } from './state.js';
+import { getState, getStorageStatus, subscribe, update } from './state.js';
 import { todayKey } from './calc.js';
-import { clear, toast } from './ui/dom.js';
+import { clear, el, toast } from './ui/dom.js';
+import { flushSaves, installFlushHooks } from './ui/autosave.js';
 import { renderHome } from './views/home.js';
 import { renderProfile } from './views/profile.js';
 import { renderIntegrations } from './views/integrations.js';
@@ -48,6 +49,9 @@ function initialRoute() {
 
 function navigate(next) {
   if (!ROUTES[next] || next === route) return;
+  // Autosaves are silent, so a value still on the debounce would not have
+  // reached the screen we're moving to. Commit before leaving.
+  flushSaves();
   route = next;
   history.replaceState({}, '', `#${next}`);
   render();
@@ -65,6 +69,8 @@ function render() {
     }
 
     clear(viewRoot);
+    const storage = getStorageStatus();
+    if (!storage.writable) viewRoot.append(storageWarning(storage));
     viewRoot.append(ROUTES[route]({ navigate, rerender: render }));
 
     for (const tab of tabs) {
@@ -75,6 +81,22 @@ function render() {
   } finally {
     rendering = false;
   }
+}
+
+/**
+ * Losing entries silently is the worst failure this app has, so a failed write
+ * gets a banner on every screen rather than a line in a console nobody opens.
+ */
+function storageWarning(storage) {
+  return el('section.card.card--tight', {
+    style: { borderColor: 'var(--danger)', background: 'rgba(255,107,107,.08)' },
+  }, [
+    el('div.row__title', { style: { color: 'var(--danger)' }, text: 'Your entries are not being saved' }),
+    el('div.row__sub', {
+      text: `${storage.error} Anything you log will disappear when you close this tab. `
+          + 'Try a normal (non-private) browser window.',
+    }),
+  ]);
 }
 
 /* ------------------------------------------------------------------ wiring */
@@ -89,6 +111,9 @@ window.addEventListener('hashchange', () => {
 });
 
 subscribe(() => render());
+
+// Commit anything still on the autosave debounce before the page can go away.
+installFlushHooks();
 
 render();
 

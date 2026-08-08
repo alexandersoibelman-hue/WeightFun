@@ -27,6 +27,7 @@ const MODULES = [
   'src/integrations/whoop.js',
   'src/integrations/appleHealth.js',
   'src/ui/dom.js',
+  'src/ui/autosave.js',
   'src/state.js',
   'src/integrations/sync.js',
   'src/views/home.js',
@@ -65,6 +66,24 @@ function stripModuleSyntax(source) {
     .replace(/^(\s*)export\s+(?=(?:async\s+)?(?:function|const|let|var|class)\b)/gm, '$1');
 }
 
+/**
+ * Every local module an entry imports must itself be in MODULES, or the bundle
+ * silently omits it and the page dies on a ReferenceError at runtime. Checking
+ * the import graph turns that into a build failure.
+ */
+function assertImportsAreBundled(source, rel, bundled) {
+  const dir = path.dirname(rel);
+  for (const m of source.matchAll(/^\s*import\s[^;]*?from\s*['"](\.[^'"]+)['"]/gm)) {
+    const target = path.posix.normalize(path.posix.join(dir, m[1]));
+    if (!bundled.has(target)) {
+      throw new Error(
+        `${rel} imports "${m[1]}" (${target}), which is not in the MODULES list. ` +
+        `Add it, in dependency order, or the bundle will omit it.`
+      );
+    }
+  }
+}
+
 /** Top-level declaration names, used to detect collisions between modules. */
 function topLevelNames(source) {
   const names = new Set();
@@ -87,11 +106,13 @@ function escapeClosingTag(js) {
 /* ------------------------------------------------------------------ build */
 
 const seen = new Map(); // name -> module that declared it
+const bundled = new Set(MODULES);
 const chunks = [];
 
 for (const rel of MODULES) {
   const raw = await fs.readFile(path.join(ROOT, rel), 'utf8');
   assertNoNamespaceImports(raw, rel);
+  assertImportsAreBundled(raw, rel, bundled);
   const code = stripModuleSyntax(raw);
 
   for (const name of topLevelNames(code)) {

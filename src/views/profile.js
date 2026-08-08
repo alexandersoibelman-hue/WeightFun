@@ -6,10 +6,11 @@
  *  - Integration controls (mirrored from the Integrations tab)
  */
 
-import { getState, update, resetAll, exportJSON, importJSON, clearSyncedData } from '../state.js';
+import { getState, update, resetAll, exportJSON, importJSON, clearSyncedData, getStorageStatus } from '../state.js';
 import { KCAL_PER_KG, fmtNum, fmtRelativeTime, goalStats, progressStats } from '../calc.js';
 import { card, el, numberField, settingRow, switchToggle, toast } from '../ui/dom.js';
 import { syncApple, syncWhoop } from '../integrations/sync.js';
+import { cancelSave, scheduleSave } from '../ui/autosave.js';
 
 export function renderProfile({ navigate, rerender }) {
   const state = getState();
@@ -32,13 +33,18 @@ export function renderProfile({ navigate, rerender }) {
 
 function weightsCard(state) {
   const draft = { ...state.profile };
+  const SAVE_KEY = 'profile:weights';
+
+  // Silent so the form isn't rebuilt mid-keystroke; the disk write still happens.
+  const commit = (options) => update((s) => {
+    s.profile.initialWeight = draft.initialWeight;
+    s.profile.currentWeight = draft.currentWeight;
+    s.profile.goalWeight = draft.goalWeight;
+  }, options);
 
   const save = () => {
-    update((s) => {
-      s.profile.initialWeight = draft.initialWeight;
-      s.profile.currentWeight = draft.currentWeight;
-      s.profile.goalWeight = draft.goalWeight;
-    });
+    cancelSave(SAVE_KEY);
+    commit();
     toast('Profile saved');
   };
 
@@ -46,12 +52,16 @@ function weightsCard(state) {
   const paintPreview = () => {
     const stats = goalStats(draft);
     preview.textContent = stats.ready
-      ? `Target: lose ${stats.targetKg.toFixed(1)} kg → ${fmtNum(stats.totalDeficitGoal)} kcal of deficit to bank.`
+      ? `Target: lose ${stats.targetKg.toFixed(1)} kg → ${fmtNum(stats.totalDeficitGoal)} kcal of deficit to bank. Saved as you type.`
       : 'Enter a starting weight and a goal weight to unlock your target.';
   };
   paintPreview();
 
-  const onChange = (field) => (value) => { draft[field] = value; paintPreview(); };
+  const onChange = (field) => (value) => {
+    draft[field] = value;
+    paintPreview();
+    scheduleSave(SAVE_KEY, () => commit({ silent: true }));
+  };
 
   return card('Your weights', [
     numberField('Initial weight', draft.initialWeight, onChange('initialWeight'), {
@@ -181,9 +191,24 @@ function dataCard(rerender) {
     toast('Exported');
   };
 
+  const storage = getStorageStatus();
+
   return card(null, [
     el('div.field__hint', {
-      text: 'Everything is stored locally on this device — nothing is uploaded. Export a backup before clearing your browser data.',
+      text: 'Entries save the moment you type them — no button needed, and closing '
+          + 'the tab loses nothing. Everything is stored on this device only; nothing '
+          + 'is uploaded.',
+    }),
+    el('div.field__hint', {
+      style: { marginTop: '8px', color: storage.writable ? 'var(--accent)' : 'var(--danger)' },
+      text: storage.writable
+        ? `Last saved ${fmtRelativeTime(storage.lastSavedAt)}.`
+        : `Not saving — ${storage.error}`,
+    }),
+    el('div.field__hint', {
+      style: { marginTop: '8px' },
+      text: 'Clearing your browser data will still wipe it, so export a backup now '
+          + 'and then whenever it would hurt to lose.',
     }),
     el('div.btn-row', { style: { marginTop: '14px' } }, [
       el('button.btn', { type: 'button', text: 'Export', onClick: download }),

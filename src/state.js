@@ -85,9 +85,22 @@ function hydrate(saved) {
   };
 }
 
+/**
+ * Whether writes are actually landing. A silent failure here means someone logs
+ * a week of meals into nothing, so the UI surfaces this rather than hiding it.
+ * Safari in private mode is the usual cause: localStorage exists but throws on
+ * write.
+ */
+const storage = { writable: true, error: null, lastSavedAt: null };
+
+export function getStorageStatus() {
+  return { ...storage };
+}
+
 let state = load();
 
 function load() {
+  probeStorage();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return hydrate(raw ? JSON.parse(raw) : null);
@@ -97,11 +110,37 @@ function load() {
   }
 }
 
+/**
+ * Find out up front whether writes will land, so the warning is on screen
+ * before anything is typed rather than after the first lost entry. Safari in
+ * private mode exposes localStorage but throws on every write.
+ */
+function probeStorage() {
+  try {
+    localStorage.setItem(`${STORAGE_KEY}.probe`, '1');
+    localStorage.removeItem(`${STORAGE_KEY}.probe`);
+  } catch (err) {
+    storage.writable = false;
+    storage.error = err?.name === 'QuotaExceededError'
+      ? 'This device is out of storage space.'
+      : 'This browser is blocking local storage (private browsing often does).';
+  }
+}
+
 function persist() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    storage.writable = true;
+    storage.error = null;
+    storage.lastSavedAt = new Date().toISOString();
+    return true;
   } catch (err) {
-    console.warn('[WeightFun] Could not save state (storage full or blocked).', err);
+    storage.writable = false;
+    storage.error = err?.name === 'QuotaExceededError'
+      ? 'This device is out of storage space.'
+      : 'This browser is blocking local storage (private browsing often does).';
+    console.warn('[WeightFun] Could not save state.', err);
+    return false;
   }
 }
 
@@ -110,13 +149,26 @@ export function getState() {
 }
 
 /**
- * Apply a mutation and notify subscribers.
+ * Apply a mutation, write it to disk, and notify subscribers.
+ *
+ * `silent` writes without notifying, which is what autosave-while-typing needs:
+ * a notification re-renders the view, and rebuilding the form under the user's
+ * fingers would drop focus mid-keystroke. The data is on disk either way.
+ *
  * @param {(draft: object) => void} mutator receives the live state object.
+ * @param {{ silent?: boolean }} [options]
  */
-export function update(mutator) {
+export function update(mutator, { silent = false } = {}) {
   mutator(state);
+
+  const wasWritable = storage.writable;
   persist();
-  listeners.forEach((fn) => fn(state));
+  // Repaint once on the transition into failure, even for a silent write —
+  // otherwise the warning banner would never reach the screen. Only on the
+  // transition, so a broken device doesn't rebuild the form every keystroke.
+  const justBroke = wasWritable && !storage.writable;
+
+  if (!silent || justBroke) listeners.forEach((fn) => fn(state));
   return state;
 }
 
@@ -147,14 +199,14 @@ export function getDay(key) {
  * Write manual values for a day. `null` clears the field.
  * Integration-sourced values are never touched here.
  */
-export function setManualDay(key, { eaten, burned }) {
+export function setManualDay(key, { eaten, burned }, options) {
   return update((s) => {
     const day = { ...emptyDay(), ...(s.days[key] || {}) };
     day.manualEaten = normalizeKcal(eaten);
     day.manualBurned = normalizeKcal(burned);
     day.updatedAt = new Date().toISOString();
     s.days[key] = day;
-  });
+  }, options);
 }
 
 /**
