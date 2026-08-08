@@ -10,8 +10,8 @@
 
 import { getState, update, setIntegrationValue } from '../state.js';
 import { BACKFILL_DAYS, dayKey, todayKey } from '../calc.js';
-import * as whoop from './whoop.js';
-import * as apple from './appleHealth.js';
+import { fetchCalories, refreshTokens, simulateCalories } from './whoop.js';
+import { fetchDietaryEnergy, simulateDietaryEnergy } from './appleHealth.js';
 
 const TICK_MS = 60_000; // check once a minute whether anything is due
 let timer = null;
@@ -51,13 +51,13 @@ export async function syncApple({ force = false } = {}) {
 
   try {
     const byDay = config.mode === 'bridge'
-      ? await apple.fetchDietaryEnergy({
+      ? await fetchDietaryEnergy({
           bridgeUrl: config.bridgeUrl,
           bridgeToken: config.bridgeToken,
           start,
           end,
         })
-      : apple.simulateDietaryEnergy({ start, end });
+      : simulateDietaryEnergy({ start, end });
 
     const written = writeDays(byDay, 'appleEaten', start, end);
     markSynced('apple', null);
@@ -84,9 +84,9 @@ export async function syncWhoop({ force = false } = {}) {
 
     if (config.mode === 'oauth') {
       const tokens = await validTokens(config);
-      byDay = await whoop.fetchCalories({ accessToken: tokens.accessToken, start, end });
+      byDay = await fetchCalories({ accessToken: tokens.accessToken, start, end });
     } else {
-      byDay = whoop.simulateCalories({ start, end });
+      byDay = simulateCalories({ start, end });
     }
 
     const written = writeDays(byDay, 'whoopBurned', start, end);
@@ -106,7 +106,7 @@ async function validTokens(config) {
 
   if (!tokens.refreshToken) throw new Error('Whoop session expired — reconnect required.');
 
-  const fresh = await whoop.refreshTokens({
+  const fresh = await refreshTokens({
     clientId: config.clientId,
     refreshToken: tokens.refreshToken,
   });

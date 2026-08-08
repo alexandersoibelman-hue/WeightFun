@@ -16,6 +16,19 @@ import { renderIntegrations } from './views/integrations.js';
 import { startScheduler } from './integrations/sync.js';
 import { completeAuthFromRedirect } from './integrations/whoop.js';
 
+/**
+ * When the app is embedded in a host page we don't control (a single-file
+ * build dropped into someone else's shell), there may be no viewport meta —
+ * and without one a phone lays the page out at ~980px and zooms out. Install
+ * it if it's missing; index.html already ships one, so this is usually a no-op.
+ */
+if (!document.querySelector('meta[name="viewport"]')) {
+  const meta = document.createElement('meta');
+  meta.name = 'viewport';
+  meta.content = 'width=device-width, initial-scale=1, viewport-fit=cover';
+  document.head.append(meta);
+}
+
 const ROUTES = {
   home: renderHome,
   integrations: renderIntegrations,
