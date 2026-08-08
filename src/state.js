@@ -46,11 +46,11 @@ function defaultState() {
       },
       whoop: {
         enabled: false,
-        mode: 'simulated',      // 'oauth' | 'simulated'
-        clientId: '',
-        redirectUri: '',
-        syncIntervalHours: 2,
-        tokens: null,           // { accessToken, refreshToken, expiresAt }
+        /** 'relay' hits your deployed Worker; 'simulated' generates plausible data. */
+        mode: 'simulated',
+        relayUrl: '',
+        relayToken: '',
+        syncIntervalHours: 2,   // Whoop rides the same cadence as Apple Health
         lastSync: null,
         lastError: null,
       },

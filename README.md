@@ -6,14 +6,17 @@ calorie-deficit target and lets you chip away at it.
 > **7,700 kcal of cumulative deficit = 1 kg of body weight.**
 > Want to lose 10 kg? That's 77,000 points to bank.
 
-Dark mode, large-card layout, bottom toolbar, mobile-first. No build step, no
-dependencies, no backend — it's static files and `localStorage`.
+Dark mode, large-card layout, bottom toolbar, mobile-first. No build step and no
+dependencies — it's static files and `localStorage`. Syncing real Whoop and Apple
+Health data additionally needs a small relay you deploy yourself; see below for
+why that's unavoidable.
 
 ## Running it
 
 ```bash
-npm start          # http://localhost:4173
-npm test           # 30 unit tests over the calorie engine
+npm start            # http://localhost:4173
+npm test             # 42 unit tests: calorie engine + relay helpers
+npm run build:single # one self-contained dist/weightfun.html
 ```
 
 Any static server works (`python3 -m http.server`, Netlify, GitHub Pages, S3).
@@ -73,54 +76,49 @@ refreshes, so a late-arriving Whoop score still lands on the right day.
 
 ## Integrations, honestly
 
-### Whoop — a real API connection
+**Neither source can be reached from a browser.** Both go through a small relay
+Worker you deploy yourself — see **[relay/README.md](relay/README.md)** for the
+15-minute setup.
 
-OAuth 2.0 Authorization Code + **PKCE**, so no client secret is ever put in the
-browser. Calories come from the v2 cycle endpoint, which reports energy in
-kilojoules (`kcal = kJ / 4.184`). A Whoop cycle runs sleep-to-sleep rather than
-midnight-to-midnight, so each cycle is attributed to the local calendar day it
-started on.
+### Whoop — why a relay
 
-To connect: register an app at [developer.whoop.com](https://developer.whoop.com),
-then on the Integrations tab switch **Source** to *Whoop API*, paste your client
-ID, and add the redirect URI the app shows you to your Whoop app's settings.
-Scopes: `read:cycles read:workout read:profile offline`.
+Three independent blockers, any one of which is fatal to a browser-only client:
 
-### Apple Health — why it needs a bridge
+- The token exchange requires a **client secret**. Anything shipped to a web page
+  is readable by whoever opens it, so the secret cannot live there.
+- The token and data endpoints send **no CORS headers** — `fetch()` from a page
+  fails whatever credentials you hold.
+- Registered redirect URIs must be `https://` or `whoop://`, so a plain
+  `http://localhost` dev server can't be the callback.
+
+The relay holds the credentials, runs the OAuth round trip, and proxies the API.
+It also does the unit conversion (`kcal = kJ / 4.184`) and maps each cycle to a
+calendar day — Whoop cycles run sleep-to-sleep, so a cycle is attributed to the
+day it started on **in the wearer's timezone**, taken from the `timezone_offset`
+on the record rather than the server's clock.
+
+### Apple Health — why a bridge
 
 **HealthKit has no public web API.** Apple exposes health data only to native
-code running on the device, so unlike Whoop there is no OAuth endpoint a browser
-can authenticate against. This is a platform limitation, not something the app
-can work around.
+code on the device, so there is no endpoint to authenticate against. This is a
+platform limitation, not something the app can work around.
 
-The supported route is to push the data out from the device. Either works:
+The data has to be pushed off the device instead. A Shortcuts automation reads
+Dietary Energy and POSTs it to the relay — no native build required. A Capacitor
+or Swift wrapper querying `HKQuantityTypeIdentifierDietaryEnergyConsumed` lands
+on the same contract if you'd rather go that way.
 
-**1. Shortcuts automation** — no native build required:
+One honest caveat: iOS time-of-day automations repeat **daily**, not hourly, so
+"every 2 hours" means several automations rather than one. The relay README lays
+out a five-automation schedule that covers the day.
 
-```
-Shortcuts → Automation → every 2 hours
-  Find Health Samples  where Type = Dietary Energy, today
-  Get Contents of URL  POST → your bridge endpoint
-```
-
-**2. Native wrapper** (Capacitor / Swift `WKWebView`) — query
-`HKQuantityTypeIdentifierDietaryEnergyConsumed` and hand the samples to the web
-layer.
-
-Both land on the same contract. Point **Bridge URL** at an endpoint that answers:
+Either way the app reads back the same shape:
 
 ```http
-GET /health?type=...&start=2026-08-01&end=2026-08-08
+GET /health/dietary-energy?start=2026-08-01&end=2026-08-08
 ```
 ```json
 { "days": { "2026-08-08": 2180, "2026-08-07": 1940 } }
-```
-
-Values are kcal. Raw sample arrays are accepted too, and `kJ` units are converted
-automatically:
-
-```json
-{ "samples": [{ "date": "2026-08-08T08:00:00Z", "value": 500, "unit": "kcal" }] }
 ```
 
 ### Simulated mode
@@ -143,16 +141,19 @@ immediately. It also re-checks on tab focus and on regaining connectivity.
 index.html              shell + bottom toolbar
 styles/app.css          design tokens and components
 src/
-  main.js               router, render loop, OAuth redirect handling
+  main.js               router, render loop, app bootstrap
   state.js              localStorage store
   calc.js               deficit maths, streaks, badges, date handling
   views/                home · profile · integrations
   integrations/
-    whoop.js            OAuth + PKCE, cycle fetch, kJ→kcal
+    whoop.js            relay client + simulator
     appleHealth.js      bridge client, payload normalisation
     sync.js             2-hour scheduler, merge + write
   ui/dom.js             element helpers
-test/calc.test.js       engine tests
+relay/
+  worker.js             Cloudflare Worker: Whoop OAuth + API proxy, Health ingest
+  README.md             deployment and Shortcuts setup
+test/                   engine + relay tests
 ```
 
 Views re-render wholesale on state change. They're small enough that a rebuild
@@ -161,7 +162,12 @@ function of state.
 
 ## Data and privacy
 
-Everything stays in `localStorage` on the device. Nothing is uploaded, and there
-is no analytics or backend. Whoop tokens are held locally; clearing site data
-signs you out. Use **Export** in Profile for a backup — clearing browser data
+Everything the app itself holds stays in `localStorage` on the device, and there
+is no analytics. Use **Export** in Profile for a backup — clearing browser data
 wipes your history.
+
+The relay is the one exception, and only if you deploy it: it stores your Whoop
+tokens and your Dietary Energy figures in your own Cloudflare account, under your
+own credentials. The Whoop client secret never reaches the browser. The relay
+token does live in `localStorage`, so treat any device with the app open as
+holding that credential.

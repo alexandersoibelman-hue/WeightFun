@@ -1,204 +1,84 @@
 /**
- * Whoop integration.
+ * Whoop integration (client side).
  *
- * Pulls the "Calories" figure from the Whoop v2 Cycle endpoint and files it as
- * the day's calories-burned. Whoop reports energy in kilojoules, so we convert:
+ * The app does NOT talk to Whoop directly, and can't:
  *
- *   kcal = kilojoule / 4.184
+ *   - the token exchange requires a client secret, which cannot be shipped in
+ *     a web page without handing it to anyone who opens the page;
+ *   - Whoop's token and data endpoints send no CORS headers, so a browser
+ *     `fetch()` to them fails regardless of credentials;
+ *   - registered redirect URIs must be https:// or whoop://, so a plain
+ *     http://localhost dev server can't be the callback either.
  *
- * Auth is OAuth 2.0 Authorization Code + PKCE, which is the flow Whoop expects
- * for public clients (no client secret ever reaches the browser).
- *
- * Docs: https://developer.whoop.com
+ * So the credentials and the API calls live in the relay Worker (see
+ * relay/worker.js), and this module is a thin client for it. The relay does
+ * the kilojoule conversion and the sleep-to-sleep cycle mapping, and answers
+ * with calendar days the app can file directly.
  */
 
 import { dayKey } from '../calc.js';
 
-export const WHOOP_AUTH_URL = 'https://api.prod.whoop.com/oauth/oauth2/auth';
-export const WHOOP_TOKEN_URL = 'https://api.prod.whoop.com/oauth/oauth2/token';
-export const WHOOP_API_BASE = 'https://api.prod.whoop.com/developer/v2';
-export const WHOOP_SCOPES = 'read:cycles read:workout read:profile offline';
-
 const KJ_PER_KCAL = 4.184;
-const PKCE_KEY = 'weightfun.whoop.pkce';
 
+/** Exposed for the tests, and to document the conversion the relay performs. */
 export function kilojoulesToKcal(kj) {
   return kj / KJ_PER_KCAL;
 }
 
-/* --------------------------------------------------------------------------
- * PKCE
- * ------------------------------------------------------------------------ */
-
-function base64url(bytes) {
-  let str = '';
-  bytes.forEach((b) => { str += String.fromCharCode(b); });
-  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function randomString(byteLength = 48) {
-  return base64url(crypto.getRandomValues(new Uint8Array(byteLength)));
-}
-
-async function challengeFor(verifier) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
-  return base64url(new Uint8Array(digest));
-}
-
-export function defaultRedirectUri() {
-  return `${location.origin}${location.pathname}`;
+/** Where the browser sends you to authorize; the relay handles the callback. */
+export function connectUrl({ relayUrl, relayToken, returnTo }) {
+  const url = new URL(joinPath(relayUrl, '/whoop/connect'));
+  url.searchParams.set('token', relayToken);
+  if (returnTo) url.searchParams.set('return', returnTo);
+  return url.toString();
 }
 
 /**
- * Kick off the OAuth dance. Stores the PKCE verifier + state so the redirect
- * back into the app can complete the exchange.
- */
-export async function beginAuth({ clientId, redirectUri }) {
-  if (!clientId) throw new Error('A Whoop client ID is required.');
-  if (!globalThis.crypto?.subtle) {
-    throw new Error('PKCE needs a secure context — serve the app over HTTPS or localhost.');
-  }
-
-  const verifier = randomString();
-  const state = randomString(16);
-  sessionStorage.setItem(PKCE_KEY, JSON.stringify({ verifier, state, clientId, redirectUri }));
-
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    response_type: 'code',
-    scope: WHOOP_SCOPES,
-    state,
-  });
-
-  location.assign(`${WHOOP_AUTH_URL}?${params}`);
-}
-
-/**
- * Complete the OAuth redirect if `?code=` is present.
- * @returns {Promise<object|null>} token bundle, or null when there's nothing to do.
- */
-export async function completeAuthFromRedirect() {
-  const url = new URL(location.href);
-  const code = url.searchParams.get('code');
-  const returnedState = url.searchParams.get('state');
-  const error = url.searchParams.get('error');
-
-  const stripQuery = () => history.replaceState({}, '', url.pathname + url.hash);
-
-  if (error) {
-    sessionStorage.removeItem(PKCE_KEY);
-    stripQuery();
-    throw new Error(`Whoop denied the request: ${error}`);
-  }
-  if (!code) return null;
-
-  const stashed = sessionStorage.getItem(PKCE_KEY);
-  sessionStorage.removeItem(PKCE_KEY);
-  stripQuery();
-
-  if (!stashed) throw new Error('No pending Whoop authorization was found.');
-  const { verifier, state, clientId, redirectUri } = JSON.parse(stashed);
-  if (returnedState !== state) throw new Error('Whoop state mismatch — authorization rejected.');
-
-  const body = new URLSearchParams({
-    grant_type: 'authorization_code',
-    code,
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    code_verifier: verifier,
-  });
-
-  return exchange(body);
-}
-
-export async function refreshTokens({ clientId, refreshToken }) {
-  return exchange(new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    client_id: clientId,
-    scope: WHOOP_SCOPES,
-  }));
-}
-
-async function exchange(body) {
-  const res = await fetch(WHOOP_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
-
-  if (!res.ok) {
-    throw new Error(`Whoop token exchange failed (${res.status}). ${await safeText(res)}`);
-  }
-
-  const json = await res.json();
-  return {
-    accessToken: json.access_token,
-    refreshToken: json.refresh_token || null,
-    // Renew a minute early so a request never races the expiry.
-    expiresAt: Date.now() + Math.max(0, (json.expires_in || 3600) - 60) * 1000,
-  };
-}
-
-async function safeText(res) {
-  try { return (await res.text()).slice(0, 200); } catch { return ''; }
-}
-
-/* --------------------------------------------------------------------------
- * Data fetch
- * ------------------------------------------------------------------------ */
-
-/**
- * Fetch physiological cycles overlapping the window and reduce them to
- * kcal-burned per calendar day.
- *
- * A Whoop cycle is not a calendar day (it runs sleep-to-sleep), so each cycle
- * is attributed to the local calendar day it started on.
- *
+ * Ask the relay for calories burned per calendar day.
  * @returns {Promise<Record<string, number>>} { 'YYYY-MM-DD': kcal }
  */
-export async function fetchCalories({ accessToken, start, end }) {
-  const byDay = {};
-  let nextToken = null;
-  let pages = 0;
+export async function fetchCalories({ relayUrl, relayToken, start, end }) {
+  if (!relayUrl) throw new Error('No relay URL configured for Whoop.');
 
-  do {
-    const params = new URLSearchParams({
-      start: start.toISOString(),
-      end: end.toISOString(),
-      limit: '25',
-    });
-    if (nextToken) params.set('nextToken', nextToken);
+  const url = new URL(joinPath(relayUrl, '/whoop/calories'));
+  url.searchParams.set('start', dayKey(start));
+  url.searchParams.set('end', dayKey(end));
 
-    const res = await fetch(`${WHOOP_API_BASE}/cycle?${params}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${relayToken}`, Accept: 'application/json' },
+  });
 
-    if (res.status === 401) throw new Error('Whoop token expired or was revoked.');
-    if (res.status === 429) throw new Error('Whoop rate limit hit — try again shortly.');
-    if (!res.ok) throw new Error(`Whoop cycle request failed (${res.status}).`);
+  if (res.status === 401) throw new Error('The relay rejected your token — check it matches RELAY_TOKEN.');
+  if (res.status === 428) throw new Error('Whoop is not connected yet. Tap "Connect Whoop".');
+  if (!res.ok) throw new Error(await relayError(res));
 
-    const json = await res.json();
-    for (const cycle of json.records || []) {
-      const kj = cycle?.score?.kilojoule;
-      if (typeof kj !== 'number') continue; // score still pending
-      const key = dayKey(new Date(cycle.start));
-      byDay[key] = (byDay[key] || 0) + kilojoulesToKcal(kj);
-    }
+  const data = await res.json();
+  return data.days || {};
+}
 
-    nextToken = json.next_token || null;
-    pages += 1;
-  } while (nextToken && pages < 10);
+/** Relay status, for the "test connection" button. */
+export async function fetchRelayStatus({ relayUrl }) {
+  const res = await fetch(joinPath(relayUrl, '/'), { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`Relay returned ${res.status}.`);
+  return res.json();
+}
 
-  // Round once, at the end, so multi-cycle days don't accumulate rounding drift.
-  for (const key of Object.keys(byDay)) byDay[key] = Math.round(byDay[key]);
-  return byDay;
+async function relayError(res) {
+  try {
+    const data = await res.json();
+    if (data?.error) return data.error;
+  } catch { /* fall through to the status code */ }
+  return `Relay returned ${res.status}.`;
+}
+
+/** Join without doubling or dropping the slash, whatever the user pasted. */
+function joinPath(base, path) {
+  return String(base).replace(/\/+$/, '') + path;
 }
 
 /* --------------------------------------------------------------------------
- * Simulator — used when no Whoop app credentials are configured, so the whole
- * sync pipeline (scheduling, merging, streaks) is exercisable end to end.
+ * Simulator — used when no relay is configured, so the whole sync pipeline
+ * (scheduling, merging, streaks, badges) is exercisable without credentials.
  * ------------------------------------------------------------------------ */
 
 export function simulateCalories({ start, end }) {

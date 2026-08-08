@@ -14,7 +14,6 @@ import { renderHome } from './views/home.js';
 import { renderProfile } from './views/profile.js';
 import { renderIntegrations } from './views/integrations.js';
 import { startScheduler } from './integrations/sync.js';
-import { completeAuthFromRedirect } from './integrations/whoop.js';
 
 /**
  * When the app is embedded in a host page we don't control (a single-file
@@ -95,24 +94,17 @@ render();
 
 /* ----------------------------------------------------------------- startup */
 
-(async function startup() {
-  // Finish a Whoop OAuth redirect before the scheduler tries to use the tokens.
-  try {
-    const tokens = await completeAuthFromRedirect();
-    if (tokens) {
-      update((s) => {
-        s.integrations.whoop.tokens = tokens;
-        s.integrations.whoop.enabled = true;
-        s.integrations.whoop.mode = 'oauth';
-        s.integrations.whoop.lastError = null;
-        s.integrations.whoop.lastSync = null; // force an immediate first pull
-      });
-      toast('Whoop connected');
-      navigate('integrations');
-    }
-  } catch (err) {
-    toast(err.message);
-  }
+// The relay sends us back with #whoop=connected after a successful authorization.
+if (location.hash.includes('whoop=connected')) {
+  history.replaceState({}, '', location.pathname + location.search);
+  update((s) => {
+    s.integrations.whoop.enabled = true;
+    s.integrations.whoop.mode = 'relay';
+    s.integrations.whoop.lastError = null;
+    s.integrations.whoop.lastSync = null; // force an immediate first pull
+  });
+  toast('Whoop connected');
+  navigate('integrations');
+}
 
-  startScheduler();
-})();
+startScheduler();

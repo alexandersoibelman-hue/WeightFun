@@ -1,0 +1,20 @@
+name = "weightfun-relay"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Created by: npx wrangler kv namespace create STORE
+# Paste the returned id below.
+[[kv_namespaces]]
+binding = "STORE"
+id = "PASTE_YOUR_KV_NAMESPACE_ID_HERE"
+
+[vars]
+# Optional. Comma-separated list of origins allowed to call the relay from a
+# browser. Leave as "*" unless you want to lock it down — the bearer token is
+# what actually guards the endpoints.
+APP_ORIGIN = "*"
+
+# Secrets are NOT set here. Run these once after deploying:
+#   npx wrangler secret put WHOOP_CLIENT_ID
+#   npx wrangler secret put WHOOP_CLIENT_SECRET
+#   npx wrangler secret put RELAY_TOKEN

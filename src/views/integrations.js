@@ -4,16 +4,17 @@
  * Apple Health — "Dietary Energy" → daily calories eaten, every 2 hours.
  * Whoop        — "Calories"       → daily calories burned.
  *
- * Whoop is a real OAuth 2.0 + PKCE connection. Apple Health has no web API, so
- * it talks to an on-device bridge (see integrations/appleHealth.js). Both have
- * a simulated mode so the pipeline can be driven without credentials.
+ * Neither source is reachable from a browser: HealthKit is native-only, and
+ * Whoop needs a client secret and sends no CORS headers. Both therefore go
+ * through the relay Worker (see relay/README.md). Both also have a simulated
+ * mode so the pipeline can be driven without any of that set up.
  */
 
 import { getState, update } from '../state.js';
 import { fmtRelativeTime } from '../calc.js';
 import { card, el, settingRow, switchToggle, toast } from '../ui/dom.js';
 import { syncApple, syncWhoop, nextSyncAt } from '../integrations/sync.js';
-import { beginAuth, defaultRedirectUri, WHOOP_SCOPES } from '../integrations/whoop.js';
+import { connectUrl, fetchRelayStatus } from '../integrations/whoop.js';
 import { DIETARY_ENERGY_TYPE } from '../integrations/appleHealth.js';
 
 export function renderIntegrations() {
@@ -73,13 +74,14 @@ function appleCard(state) {
   body.push(
     el('div.note', { style: { marginTop: '12px' }, html: `
       <b>Why a bridge?</b> HealthKit has no public web API — Apple only exposes health
-      data to code running on the device, so a browser can't authenticate to it directly.
-      Push the data out instead:<br><br>
-      <b>Shortcuts (no app build needed):</b> Shortcuts → Automation → every 2 hours →
-      <i>Find Health Samples</i> where type is <code>${DIETARY_ENERGY_TYPE}</code> →
-      <i>Get Contents of URL</i>, POST to your bridge.<br><br>
-      The bridge answers <code>GET ?start=YYYY-MM-DD&amp;end=YYYY-MM-DD</code> with
-      <code>{"days":{"2026-08-08":2180}}</code> in kcal.
+      data to code running on the device, so a browser can't read it directly. Push the
+      data out instead, with no app build required:<br><br>
+      <b>Shortcuts → Automation → every 2 hours</b>: <i>Find Health Samples</i> where
+      type is <code>${DIETARY_ENERGY_TYPE}</code> → <i>Calculate Statistics</i> (Sum) →
+      <i>Get Contents of URL</i>, POST to
+      <code>{relay}/health/dietary-energy</code>.<br><br>
+      Point the Bridge URL below at the same relay you use for Whoop. Full walkthrough
+      in <code>relay/README.md</code>.
     ` }),
     syncButton('Sync Apple Health now', config.enabled, () => syncApple({ force: true })),
     errorNote(config.lastError),
@@ -92,7 +94,6 @@ function appleCard(state) {
 
 function whoopCard(state) {
   const config = state.integrations.whoop;
-  const connected = Boolean(config.tokens?.accessToken);
 
   const body = [
     intgHead('⌚', 'Whoop', 'Calories → calories burned', config),
@@ -106,53 +107,61 @@ function whoopCard(state) {
     ),
     settingRow(
       'Source',
-      config.mode === 'oauth'
-        ? (connected ? 'Connected to the Whoop API' : 'Not connected yet')
-        : 'Simulated data (no credentials configured)',
-      modeSelect(config.mode, [['simulated', 'Simulated'], ['oauth', 'Whoop API']], (mode) => {
+      config.mode === 'relay'
+        ? 'Live data via your relay Worker'
+        : 'Simulated data (no relay configured)',
+      modeSelect(config.mode, [['simulated', 'Simulated'], ['relay', 'Whoop (via relay)']], (mode) => {
         update((s) => { s.integrations.whoop.mode = mode; });
       }),
     ),
   ];
 
-  if (config.mode === 'oauth') {
-    const redirect = config.redirectUri || defaultRedirectUri();
-
+  if (config.mode === 'relay') {
     body.push(
-      textField('Client ID', config.clientId, 'Your Whoop app client ID', (v) => {
-        update((s) => { s.integrations.whoop.clientId = v.trim(); });
+      textField('Relay URL', config.relayUrl, 'https://weightfun-relay.you.workers.dev', (v) => {
+        update((s) => { s.integrations.whoop.relayUrl = v.trim().replace(/\/+$/, ''); });
       }),
-      textField('Redirect URI', redirect, defaultRedirectUri(), (v) => {
-        update((s) => { s.integrations.whoop.redirectUri = v.trim(); });
+      textField('Relay token', config.relayToken, 'Your RELAY_TOKEN secret', (v) => {
+        update((s) => { s.integrations.whoop.relayToken = v.trim(); });
       }),
       el('div.note', { style: { marginTop: '4px' }, html: `
-        Register the app at <b>developer.whoop.com</b>, add
-        <code>${escapeHtml(redirect)}</code> as a redirect URI, and request the scopes
-        <code>${WHOOP_SCOPES}</code>. Authorization uses PKCE, so no client secret is
-        stored in the browser.
+        <b>Why a relay?</b> Whoop's token exchange needs a client secret, which can't
+        live in a web page, and their API sends no CORS headers — so a browser can't
+        call it at all. The relay Worker holds the credentials and proxies the calls.
+        See <code>relay/README.md</code> to deploy your own; it takes about five minutes.
       ` }),
       el('button.btn.btn--primary.btn--block', {
         type: 'button',
-        text: connected ? 'Reconnect Whoop' : 'Connect Whoop',
+        text: 'Connect Whoop',
         style: { marginTop: '12px' },
-        onClick: async () => {
-          try {
-            await beginAuth({
-              clientId: getState().integrations.whoop.clientId,
-              redirectUri: getState().integrations.whoop.redirectUri || defaultRedirectUri(),
-            });
-          } catch (err) {
-            toast(err.message);
+        onClick: () => {
+          const { relayUrl, relayToken } = getState().integrations.whoop;
+          if (!relayUrl || !relayToken) {
+            toast('Add your relay URL and token first');
+            return;
           }
+          // The relay owns the OAuth round trip and sends us back here.
+          location.assign(connectUrl({ relayUrl, relayToken, returnTo: location.href }));
         },
       }),
-      connected && el('button.btn.btn--danger.btn--block', {
+      el('button.btn.btn--block', {
         type: 'button',
-        text: 'Disconnect',
+        text: 'Test relay',
         style: { marginTop: '10px' },
-        onClick: () => {
-          update((s) => { s.integrations.whoop.tokens = null; });
-          toast('Whoop disconnected');
+        onClick: async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          try {
+            const { relayUrl } = getState().integrations.whoop;
+            const info = await fetchRelayStatus({ relayUrl });
+            toast(info.whoop?.connected
+              ? `Relay up · Whoop connected · ${info.appleHealth?.daysStored ?? 0} days of food data`
+              : 'Relay up, but Whoop is not connected yet');
+          } catch (err) {
+            toast(err.message);
+          } finally {
+            btn.disabled = false;
+          }
         },
       }),
     );
@@ -256,8 +265,3 @@ function mathCard() {
   ]);
 }
 
-function escapeHtml(str) {
-  return String(str).replace(/[&<>"']/g, (c) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-  ));
-}

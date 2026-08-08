@@ -10,7 +10,7 @@
 
 import { getState, update, setIntegrationValue } from '../state.js';
 import { BACKFILL_DAYS, dayKey, todayKey } from '../calc.js';
-import { fetchCalories, refreshTokens, simulateCalories } from './whoop.js';
+import { fetchCalories, simulateCalories } from './whoop.js';
 import { fetchDietaryEnergy, simulateDietaryEnergy } from './appleHealth.js';
 
 const TICK_MS = 60_000; // check once a minute whether anything is due
@@ -82,9 +82,13 @@ export async function syncWhoop({ force = false } = {}) {
   try {
     let byDay;
 
-    if (config.mode === 'oauth') {
-      const tokens = await validTokens(config);
-      byDay = await fetchCalories({ accessToken: tokens.accessToken, start, end });
+    if (config.mode === 'relay') {
+      byDay = await fetchCalories({
+        relayUrl: config.relayUrl,
+        relayToken: config.relayToken,
+        start,
+        end,
+      });
     } else {
       byDay = simulateCalories({ start, end });
     }
@@ -96,24 +100,6 @@ export async function syncWhoop({ force = false } = {}) {
     markSynced('whoop', err.message, { touchTime: false });
     throw err;
   }
-}
-
-/** Returns a non-expired token bundle, refreshing if needed. */
-async function validTokens(config) {
-  const tokens = config.tokens;
-  if (!tokens?.accessToken) throw new Error('Whoop is not connected.');
-  if (tokens.expiresAt && Date.now() < tokens.expiresAt) return tokens;
-
-  if (!tokens.refreshToken) throw new Error('Whoop session expired — reconnect required.');
-
-  const fresh = await refreshTokens({
-    clientId: config.clientId,
-    refreshToken: tokens.refreshToken,
-  });
-  // Whoop may omit a new refresh token; keep the existing one if so.
-  const merged = { ...fresh, refreshToken: fresh.refreshToken || tokens.refreshToken };
-  update((s) => { s.integrations.whoop.tokens = merged; });
-  return merged;
 }
 
 /* --------------------------------------------------------------------------
