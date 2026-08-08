@@ -35,11 +35,11 @@ jobs:
         with:
           node-version: 22
 
-      # enablement: true turns Pages on for the repo, so this needs no
-      # click-through in Settings the first time it runs.
+      # Requires Pages to be enabled once, under
+      # Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
+      # (enablement: true can't do it for us — the workflow token is allowed to
+      # deploy to Pages but not to create the site.)
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Assemble the site
         run: |

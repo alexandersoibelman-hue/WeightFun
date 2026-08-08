@@ -11,6 +11,10 @@ dependencies — it's static files and `localStorage`. Syncing real Whoop and Ap
 Health data additionally needs a small relay you deploy yourself; see below for
 why that's unavoidable.
 
+**Live:** <https://alexandersoibelman-hue.github.io/WeightFun/> — deployed from
+this branch on every push. Add it to your phone's home screen and it runs
+full-screen like a native app.
+
 ## Running it
 
 ```bash
@@ -21,7 +25,12 @@ npm run build:single # one self-contained dist/weightfun.html
 
 Any static server works (`python3 -m http.server`, Netlify, GitHub Pages, S3).
 ES modules can't load over `file://`, so it does need to be *served* rather than
-opened directly.
+opened directly — or use the single-file build, which has no module imports and
+opens straight off disk.
+
+`.github/workflows/pages.yml` runs the tests, then publishes the app to GitHub
+Pages. It also emits `standalone.html` next to it — the same app as one
+self-contained file.
 
 ## Screens
 
