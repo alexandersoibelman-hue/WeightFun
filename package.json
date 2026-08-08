@@ -1,0 +1,15 @@
+{
+  "name": "weightfun",
+  "version": "1.0.0",
+  "description": "Gamified calorie-deficit tracking — turn a weight-loss goal into a points target.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "dev": "node scripts/serve.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
