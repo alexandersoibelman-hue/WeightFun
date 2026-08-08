@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
   BACKFILL_DAYS, KCAL_PER_KG, addDays, dayKey, dayTotals, daysAgo,
   earnedBadges, goalStats, hasAnyData, isEditable, progressStats, streakStats,
+  stripSyncedValues,
 } from '../src/calc.js';
 import { normalizeBridgePayload } from '../src/integrations/appleHealth.js';
 import { kilojoulesToKcal } from '../src/integrations/whoop.js';
@@ -225,6 +226,44 @@ test('badges unlock from progress and streak', () => {
   assert.equal(byId.kg1, true, '10,000 kcal is more than one kg');
   assert.equal(byId.kg5, false);
   assert.equal(byId.goal, false);
+});
+
+/* --------------------------------------------------- clearing synced data */
+
+test('clearing synced data keeps what you typed and drops what synced', () => {
+  const days = stripSyncedValues({
+    [day(0)]: { manualEaten: 2100, manualBurned: null, appleEaten: 1800, whoopBurned: 2600 },
+  });
+  assert.deepEqual(days[day(0)], {
+    manualEaten: 2100, manualBurned: null, appleEaten: null, whoopBurned: null,
+  });
+});
+
+test('a day that was purely synced disappears entirely', () => {
+  const days = stripSyncedValues({
+    [day(0)]: { manualEaten: 2100, appleEaten: 1800 },
+    [day(-1)]: { appleEaten: 1900, whoopBurned: 2500 },
+  });
+  assert.deepEqual(Object.keys(days), [day(0)]);
+});
+
+test('clearing demo data restores the manual-only totals exactly', () => {
+  const profile = { initialWeight: 95, currentWeight: 95, goalWeight: 85 };
+  const manualOnly = { [day(0)]: { manualEaten: 2000, manualBurned: 2700 } };
+
+  const polluted = {
+    [day(0)]: { manualEaten: 2000, manualBurned: 2700, appleEaten: 1800, whoopBurned: 2600 },
+    [day(-1)]: { appleEaten: 1900, whoopBurned: 2500 },
+    [day(-2)]: { appleEaten: 2000, whoopBurned: 2400 },
+  };
+
+  assert.notEqual(progressStats(polluted, profile).accrued, 700);
+  assert.equal(streakStats(polluted).count, 3, 'demo data inflated the streak');
+
+  const cleaned = stripSyncedValues(polluted);
+  assert.equal(progressStats(cleaned, profile).accrued, progressStats(manualOnly, profile).accrued);
+  assert.equal(progressStats(cleaned, profile).accrued, 700);
+  assert.equal(streakStats(cleaned).count, 1, 'streak falls back to the real logged day');
 });
 
 /* ----------------------------------------------------------- integrations */

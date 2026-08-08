@@ -289,25 +289,37 @@ function dayEditor(key, state) {
 
   if (editable) {
     body.append(
-      numberField('Calories eaten (manual)', draft.eaten, (v) => { draft.eaten = v; paintNet(); }, {
+      numberField('Calories eaten', draft.eaten, (v) => { draft.eaten = v; paintNet(); }, {
         unit: 'kcal',
-        hint: 'Adds on top of anything Apple Health has already synced for this day.',
+        hint: totals.appleEaten > 0
+          ? `Adds to the ${fmtNum(totals.appleEaten)} kcal Apple Health synced for this day.`
+          : 'Everything you ate and drank.',
       }),
-      numberField('Calories burned (manual)', draft.burned, (v) => { draft.burned = v; paintNet(); }, {
+      numberField('Calories burned', draft.burned, (v) => { draft.burned = v; paintNet(); }, {
         unit: 'kcal',
-        hint: 'Adds on top of anything Whoop has already synced for this day.',
+        hint: totals.whoopBurned > 0
+          ? `Adds to the ${fmtNum(totals.whoopBurned)} kcal Whoop synced for this day.`
+          : 'Your total burn for the day, not just exercise.',
       }),
     );
   }
 
-  // Show what each source contributed, so the arithmetic is never a mystery.
-  const sources = el('div', { style: { margin: '4px 0 2px' } }, [
-    sourceLine('Eaten — Apple Health', totals.appleEaten, 'synced'),
-    sourceLine('Eaten — manual', totals.manualEaten),
-    sourceLine('Burned — Whoop', totals.whoopBurned, 'synced'),
-    sourceLine('Burned — manual', totals.manualBurned),
-  ]);
-  body.append(sources);
+  // The per-source breakdown only earns its space once something is actually
+  // syncing. On a manual-only setup it would be four rows of dashes.
+  const hasSynced = totals.appleEaten > 0 || totals.whoopBurned > 0;
+  if (hasSynced) {
+    body.append(el('div', { style: { margin: '4px 0 2px' } }, [
+      sourceLine('Eaten — Apple Health', totals.appleEaten, 'synced'),
+      sourceLine('Eaten — manual', totals.manualEaten),
+      sourceLine('Burned — Whoop', totals.whoopBurned, 'synced'),
+      sourceLine('Burned — manual', totals.manualBurned),
+    ]));
+  } else if (!editable) {
+    body.append(el('div', { style: { margin: '4px 0 2px' } }, [
+      sourceLine('Calories eaten', totals.eaten),
+      sourceLine('Calories burned', totals.burned),
+    ]));
+  }
 
   body.append(el('div.net-row', {}, [
     el('span.net-row__label', { text: 'Net deficit for this day' }),

@@ -110,6 +110,22 @@ export function hasAnyData(entry) {
     .some((f) => entry[f] !== null && entry[f] !== undefined);
 }
 
+/**
+ * Drop every integration-sourced value, keeping what the user typed.
+ *
+ * Days left with nothing at all are removed entirely rather than kept as empty
+ * husks, so they stop counting toward the streak and the logged-day tally.
+ */
+export function stripSyncedValues(days) {
+  const out = {};
+  for (const [key, entry] of Object.entries(days)) {
+    const kept = { ...entry, appleEaten: null, whoopBurned: null };
+    if (!hasAnyData(kept)) continue;
+    out[key] = kept;
+  }
+  return out;
+}
+
 /* --------------------------------------------------------------------------
  * Goal + progress
  * ------------------------------------------------------------------------ */

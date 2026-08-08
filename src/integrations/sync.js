@@ -50,7 +50,7 @@ export async function syncApple({ force = false } = {}) {
   const { start, end } = syncWindow();
 
   try {
-    const byDay = config.mode === 'bridge'
+    const byDay = config.mode !== 'demo'
       ? await fetchDietaryEnergy({
           bridgeUrl: config.bridgeUrl,
           bridgeToken: config.bridgeToken,
@@ -82,7 +82,7 @@ export async function syncWhoop({ force = false } = {}) {
   try {
     let byDay;
 
-    if (config.mode === 'relay') {
+    if (config.mode !== 'demo') {
       byDay = await fetchCalories({
         relayUrl: config.relayUrl,
         relayToken: config.relayToken,

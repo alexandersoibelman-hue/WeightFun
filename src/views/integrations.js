@@ -6,8 +6,9 @@
  *
  * Neither source is reachable from a browser: HealthKit is native-only, and
  * Whoop needs a client secret and sends no CORS headers. Both therefore go
- * through the relay Worker (see relay/README.md). Both also have a simulated
- * mode so the pipeline can be driven without any of that set up.
+ * through the relay Worker (see relay/README.md). Both also have a demo mode
+ * for walking through the app without any of that set up — it writes invented
+ * numbers, so it is never the default.
  */
 
 import { getState, update } from '../state.js';
@@ -53,14 +54,14 @@ function appleCard(state) {
     ),
     settingRow(
       'Source',
-      config.mode === 'bridge' ? 'On-device bridge endpoint' : 'Simulated data (no bridge configured)',
-      modeSelect(config.mode, [['simulated', 'Simulated'], ['bridge', 'Device bridge']], (mode) => {
+      config.mode === 'demo' ? 'Sample data — not your real intake' : 'Your relay endpoint',
+      modeSelect(config.mode, [['bridge', 'Device bridge'], ['demo', 'Demo data']], (mode) => {
         update((s) => { s.integrations.apple.mode = mode; });
       }),
     ),
   ];
 
-  if (config.mode === 'bridge') {
+  if (config.mode !== 'demo') {
     body.push(
       textField('Bridge URL', config.bridgeUrl, 'https://your-bridge.example/health', (v) => {
         update((s) => { s.integrations.apple.bridgeUrl = v; });
@@ -83,11 +84,12 @@ function appleCard(state) {
       Point the Bridge URL below at the same relay you use for Whoop. Full walkthrough
       in <code>relay/README.md</code>.
     ` }),
+    demoWarning(config),
     syncButton('Sync Apple Health now', config.enabled, () => syncApple({ force: true })),
     errorNote(config.lastError),
   );
 
-  return card(null, body);
+  return card(null, body.filter(Boolean));
 }
 
 /* ------------------------------------------------------------------ Whoop */
@@ -107,16 +109,16 @@ function whoopCard(state) {
     ),
     settingRow(
       'Source',
-      config.mode === 'relay'
-        ? 'Live data via your relay Worker'
-        : 'Simulated data (no relay configured)',
-      modeSelect(config.mode, [['simulated', 'Simulated'], ['relay', 'Whoop (via relay)']], (mode) => {
+      config.mode === 'demo'
+        ? 'Sample data — not your real Whoop activity'
+        : 'Live data via your relay Worker',
+      modeSelect(config.mode, [['relay', 'Whoop (via relay)'], ['demo', 'Demo data']], (mode) => {
         update((s) => { s.integrations.whoop.mode = mode; });
       }),
     ),
   ];
 
-  if (config.mode === 'relay') {
+  if (config.mode !== 'demo') {
     body.push(
       textField('Relay URL', config.relayUrl, 'https://weightfun-relay.you.workers.dev', (v) => {
         update((s) => { s.integrations.whoop.relayUrl = v.trim().replace(/\/+$/, ''); });
@@ -168,6 +170,7 @@ function whoopCard(state) {
   }
 
   body.push(
+    demoWarning(config),
     syncButton('Sync Whoop now', config.enabled, () => syncWhoop({ force: true })),
     errorNote(config.lastError),
   );
@@ -241,6 +244,16 @@ function syncButton(label, enabled, run) {
         btn.textContent = label;
       }
     },
+  });
+}
+
+function demoWarning(config) {
+  if (config.mode !== 'demo') return null;
+  return el('div.note', {
+    style: { marginTop: '12px', borderLeftColor: 'var(--warn)' },
+    html: '<b>Demo data.</b> Turning this on writes invented numbers into your '
+        + 'real log, which will skew your deficit total and your streak. Fine for '
+        + 'a look around; clear it from Profile before you trust the numbers.',
   });
 }
 

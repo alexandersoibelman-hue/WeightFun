@@ -6,7 +6,7 @@
  *  - Integration controls (mirrored from the Integrations tab)
  */
 
-import { getState, update, resetAll, exportJSON, importJSON } from '../state.js';
+import { getState, update, resetAll, exportJSON, importJSON, clearSyncedData } from '../state.js';
 import { KCAL_PER_KG, fmtNum, fmtRelativeTime, goalStats, progressStats } from '../calc.js';
 import { card, el, numberField, settingRow, switchToggle, toast } from '../ui/dom.js';
 import { syncApple, syncWhoop } from '../integrations/sync.js';
@@ -97,6 +97,9 @@ function miniStat(value, sub) {
 
 function integrationControls(state, navigate) {
   const { apple, whoop } = state.integrations;
+  const anyOn = apple.enabled || whoop.enabled;
+  const syncedDays = Object.values(state.days)
+    .filter((d) => d.appleEaten !== null || d.whoopBurned !== null).length;
 
   const toggle = (provider) => (enabled) => {
     update((s) => { s.integrations[provider].enabled = enabled; });
@@ -109,27 +112,44 @@ function integrationControls(state, navigate) {
   };
 
   return card(null, [
+    !anyOn && el('div.field__hint', { style: { marginBottom: '4px' },
+      text: 'Both are off. Log your days by hand on the Home Screen — everything '
+          + 'works the same, the numbers just come from you. Connect these when '
+          + 'you\'re ready to stop typing.' }),
     settingRow(
       'Apple Health',
       apple.enabled
         ? `Dietary Energy → calories eaten · synced ${fmtRelativeTime(apple.lastSync)}`
-        : 'Off — Dietary Energy is not being pulled in',
+        : 'Off — needs a relay before it can pull anything in',
       switchToggle(apple.enabled, toggle('apple'), 'Enable Apple Health'),
     ),
     settingRow(
       'Whoop',
       whoop.enabled
         ? `Calories → calories burned · synced ${fmtRelativeTime(whoop.lastSync)}`
-        : 'Off — Whoop calories are not being pulled in',
+        : 'Off — needs a relay before it can pull anything in',
       switchToggle(whoop.enabled, toggle('whoop'), 'Enable Whoop'),
     ),
     el('button.btn.btn--block', {
       type: 'button',
-      text: 'Manage connections →',
+      text: anyOn ? 'Manage connections →' : 'Set these up later →',
       style: { marginTop: '14px' },
       onClick: () => navigate('integrations'),
     }),
-  ]);
+    syncedDays > 0 && el('button.btn.btn--danger.btn--block', {
+      type: 'button',
+      text: `Clear synced data (${syncedDays} day${syncedDays === 1 ? '' : 's'})`,
+      style: { marginTop: '10px' },
+      onClick: () => {
+        if (!confirm(
+          `Remove everything Apple Health and Whoop wrote across ${syncedDays} `
+          + 'day(s)? Anything you typed yourself is kept.'
+        )) return;
+        clearSyncedData();
+        toast('Synced data cleared');
+      },
+    }),
+  ].filter(Boolean));
 }
 
 /* -------------------------------------------------------------- data card */

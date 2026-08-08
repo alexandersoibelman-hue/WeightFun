@@ -7,7 +7,7 @@
  * there is exactly one source of truth for the raw inputs.
  */
 
-import { todayKey } from './calc.js';
+import { stripSyncedValues, todayKey } from './calc.js';
 
 const STORAGE_KEY = 'weightfun.state.v1';
 const listeners = new Set();
@@ -36,8 +36,8 @@ function defaultState() {
     integrations: {
       apple: {
         enabled: false,
-        /** 'bridge' hits a real Shortcuts/HealthKit relay; 'simulated' generates plausible data. */
-        mode: 'simulated',
+        /** 'bridge' reads your relay; 'demo' invents sample data for a walkthrough. */
+        mode: 'bridge',
         bridgeUrl: '',
         bridgeToken: '',
         syncIntervalHours: 2,   // per spec: Dietary Energy syncs every 2 hours
@@ -46,8 +46,8 @@ function defaultState() {
       },
       whoop: {
         enabled: false,
-        /** 'relay' hits your deployed Worker; 'simulated' generates plausible data. */
-        mode: 'simulated',
+        /** 'relay' reads your deployed Worker; 'demo' invents sample data. */
+        mode: 'relay',
         relayUrl: '',
         relayToken: '',
         syncIntervalHours: 2,   // Whoop rides the same cadence as Apple Health
@@ -66,14 +66,20 @@ function defaultState() {
 function hydrate(saved) {
   const base = defaultState();
   if (!saved || typeof saved !== 'object') return base;
+
+  // 'simulated' was the old name for what is now 'demo'.
+  const migrateMode = (config) => (
+    config?.mode === 'simulated' ? { ...config, mode: 'demo' } : config
+  );
+
   return {
     ...base,
     ...saved,
     profile: { ...base.profile, ...(saved.profile || {}) },
     days: { ...(saved.days || {}) },
     integrations: {
-      apple: { ...base.integrations.apple, ...(saved.integrations?.apple || {}) },
-      whoop: { ...base.integrations.whoop, ...(saved.integrations?.whoop || {}) },
+      apple: { ...base.integrations.apple, ...migrateMode(saved.integrations?.apple) },
+      whoop: { ...base.integrations.whoop, ...migrateMode(saved.integrations?.whoop) },
     },
     ui: { ...base.ui, ...(saved.ui || {}) },
   };
@@ -171,6 +177,17 @@ function normalizeKcal(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n);
+}
+
+/**
+ * Remove everything Apple Health and Whoop have written, leaving manual
+ * entries untouched. The escape hatch for a demo-data run that polluted a
+ * real log.
+ * @returns {number} how many days still hold data afterwards
+ */
+export function clearSyncedData() {
+  update((s) => { s.days = stripSyncedValues(s.days); });
+  return Object.keys(state.days).length;
 }
 
 export function resetAll() {
