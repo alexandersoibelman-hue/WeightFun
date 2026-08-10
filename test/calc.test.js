@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import {
   BACKFILL_DAYS, KCAL_PER_KG, addDays, dayKey, dayTotals, daysAgo,
   earnedBadges, goalStats, hasAnyData, isEditable, progressStats, streakStats,
-  stripSyncedValues,
+  stripSyncedValues, BADGE_MILESTONES,
 } from '../src/calc.js';
 import { normalizeBridgePayload } from '../src/integrations/appleHealth.js';
 import { kilojoulesToKcal } from '../src/integrations/whoop.js';
@@ -150,7 +150,7 @@ test('a gap ends the streak', () => {
   assert.equal(streakStats(days).count, 2);
 });
 
-test('today is a grace day — a streak through yesterday survives until midnight', () => {
+test('an empty today does not break the streak — it is not due yet', () => {
   const days = {
     [day(-1)]: { manualEaten: 2000 },
     [day(-2)]: { manualEaten: 2000 },
@@ -158,7 +158,58 @@ test('today is a grace day — a streak through yesterday survives until midnigh
   const streak = streakStats(days);
   assert.equal(streak.count, 2);
   assert.equal(streak.todayLogged, false);
-  assert.equal(streak.atRisk, true, 'flagged so the UI can nudge the user');
+  assert.equal(streak.atRisk, false, 'yesterday is filled, so nothing is due tonight');
+});
+
+test('yesterday still empty keeps the streak, because it has until tonight', () => {
+  // Whoop only finalises yesterday overnight, so this is the normal morning
+  // state: neither today nor yesterday is in yet.
+  const days = {
+    [day(-2)]: { manualEaten: 2000 },
+    [day(-3)]: { manualEaten: 2000 },
+    [day(-4)]: { manualEaten: 2000 },
+  };
+  const streak = streakStats(days);
+  assert.equal(streak.count, 3);
+  assert.equal(streak.atRisk, true, 'yesterday is due before midnight');
+  assert.equal(streak.dueDay, day(-1));
+});
+
+test('the streak breaks once a day is missed past the following day', () => {
+  // day(-2) is now overdue: the whole of day(-1) passed without it being filled.
+  const days = {
+    [day(-3)]: { manualEaten: 2000 },
+    [day(-4)]: { manualEaten: 2000 },
+  };
+  assert.equal(streakStats(days).count, 0);
+});
+
+test('filling yesterday this morning keeps the run intact', () => {
+  const before = streakStats({
+    [day(-2)]: { manualEaten: 2000 },
+    [day(-3)]: { manualEaten: 2000 },
+  });
+  const after = streakStats({
+    [day(-1)]: { manualEaten: 2000 },
+    [day(-2)]: { manualEaten: 2000 },
+    [day(-3)]: { manualEaten: 2000 },
+  });
+  assert.equal(before.count, 2);
+  assert.equal(before.atRisk, true);
+  assert.equal(after.count, 3);
+  assert.equal(after.atRisk, false);
+});
+
+test('a grace day left empty is stepped over, not counted', () => {
+  // Logged today and the day before yesterday, with yesterday still pending.
+  const days = {
+    [day(0)]: { manualEaten: 2000 },
+    [day(-2)]: { manualEaten: 2000 },
+    [day(-3)]: { manualEaten: 2000 },
+  };
+  const streak = streakStats(days);
+  assert.equal(streak.count, 3, 'three days hold data; the pending gap is not one of them');
+  assert.equal(streak.atRisk, true);
 });
 
 test('data from integrations counts toward the streak just like manual entry', () => {
@@ -178,6 +229,11 @@ test('backfilling the previous week rebuilds the streak retroactively', () => {
 test('no data means no streak', () => {
   assert.equal(streakStats({}).count, 0);
   assert.equal(streakStats({}).atRisk, false);
+});
+
+test('only the two grace days filled is still a streak of two', () => {
+  const days = { [day(0)]: { manualEaten: 2000 }, [day(-1)]: { manualEaten: 2000 } };
+  assert.equal(streakStats(days).count, 2);
 });
 
 /* ------------------------------------------------------- editable window */
@@ -211,7 +267,7 @@ test('daysAgo is unaffected by a daylight-saving transition', () => {
 
 /* ----------------------------------------------------------------- badges */
 
-test('badges unlock from progress and streak', () => {
+test('streak badges unlock from the streak count', () => {
   const progress = progressStats(
     { [day(0)]: { whoopBurned: 10_000, appleEaten: 0 } },
     { initialWeight: 95, currentWeight: 95, goalWeight: 85 },
@@ -223,9 +279,57 @@ test('badges unlock from progress and streak', () => {
   assert.equal(byId.first, true);
   assert.equal(byId.streak3, true);
   assert.equal(byId.streak7, false);
-  assert.equal(byId.kg1, true, '10,000 kcal is more than one kg');
-  assert.equal(byId.kg5, false);
+  assert.equal(byId.streak30, false);
   assert.equal(byId.goal, false);
+});
+
+test('milestones sit at 25/50/75% of the user\'s own goal', () => {
+  // A 12 kg goal is 92,400 kcal, so the milestones land on 23,100 / 46,200 / 69,300.
+  const profile = { initialWeight: 97, currentWeight: 97, goalWeight: 85 };
+  const progress = progressStats({}, profile);
+  assert.equal(progress.totalDeficitGoal, 92_400);
+
+  const byId = Object.fromEntries(earnedBadges(progress, { count: 0 }).map((b) => [b.id, b]));
+  assert.equal(byId.pct25.target, 23_100);
+  assert.equal(byId.pct50.target, 46_200);
+  assert.equal(byId.pct75.target, 69_300);
+});
+
+test('a milestone unlocks exactly on its threshold, not a calorie before', () => {
+  const profile = { initialWeight: 97, currentWeight: 97, goalWeight: 85 };
+  const at = (kcal) => Object.fromEntries(
+    earnedBadges(progressStats({ [day(0)]: { manualBurned: kcal } }, profile), { count: 0 })
+      .map((b) => [b.id, b.earned]),
+  );
+
+  assert.equal(at(23_099).pct25, false);
+  assert.equal(at(23_100).pct25, true);
+  assert.equal(at(23_100).pct50, false);
+  assert.equal(at(46_200).pct50, true);
+  assert.equal(at(69_300).pct75, true);
+  assert.equal(at(69_300).goal, false);
+  assert.equal(at(92_400).goal, true);
+});
+
+test('milestones stay locked until a goal is set', () => {
+  const progress = progressStats({ [day(0)]: { manualBurned: 5000 } }, {});
+  const byId = Object.fromEntries(earnedBadges(progress, { count: 0 }).map((b) => [b.id, b]));
+  for (const pct of BADGE_MILESTONES) {
+    assert.equal(byId[`pct${pct}`].earned, false, `${pct}% should not unlock without a goal`);
+  }
+});
+
+test('a net surplus does not unlock a milestone', () => {
+  const profile = { initialWeight: 97, currentWeight: 97, goalWeight: 85 };
+  const progress = progressStats({ [day(0)]: { manualEaten: 3000, manualBurned: 1000 } }, profile);
+  const byId = Object.fromEntries(earnedBadges(progress, { count: 0 }).map((b) => [b.id, b.earned]));
+  assert.equal(progress.accrued, -2000);
+  assert.equal(byId.pct25, false);
+});
+
+test('the kilo badges are gone, replaced by percentage milestones', () => {
+  const ids = earnedBadges(progressStats({}, {}), { count: 0 }).map((b) => b.id);
+  assert.deepEqual(ids, ['first', 'streak3', 'streak7', 'streak30', 'pct25', 'pct50', 'pct75', 'goal']);
 });
 
 /* --------------------------------------------------- clearing synced data */

@@ -17,6 +17,16 @@ export const KCAL_PER_KG = 7700;
 /** How many days back the user may still enter or edit data (today + 6 prior). */
 export const BACKFILL_DAYS = 7;
 
+/**
+ * How long a day stays "not yet due" for the streak.
+ *
+ * Whoop only finalises a day's calories once the cycle closes overnight, so
+ * yesterday's numbers typically aren't available until this morning. A day is
+ * therefore only overdue once the *following* day has also ended: today and
+ * yesterday are both grace days, and missing them doesn't break the streak.
+ */
+export const STREAK_GRACE_DAYS = 2;
+
 /* --------------------------------------------------------------------------
  * Date keys — always local-time calendar days, never UTC.
  * ------------------------------------------------------------------------ */
@@ -201,30 +211,43 @@ export function progressStats(days, profile) {
 /**
  * Consecutive days with data, counting backwards.
  *
- * Today is a grace day: a streak built through yesterday stays alive until
- * midnight even if nothing has landed for today yet. Backfilled days count
- * exactly the same as live ones, so filling in the last 7 days from another
- * app rebuilds the streak.
+ * An unfilled day only breaks the streak once its deadline has passed, and the
+ * deadline is the end of the *following* day — see STREAK_GRACE_DAYS. Today and
+ * yesterday are therefore stepped over rather than counted or treated as a
+ * break; the first genuinely overdue empty day ends the run.
+ *
+ * Grace days are skipped, not counted, so the number always reflects days that
+ * actually hold data. Backfilled days count exactly like live ones, so filling
+ * in the last week from another app rebuilds the streak.
  */
 export function streakStats(days, from = todayKey()) {
   const has = (key) => hasAnyData(days[key]);
 
+  const yesterday = addDays(from, -1);
   const todayLogged = has(from);
-  let cursor = todayLogged ? from : addDays(from, -1);
+  const yesterdayLogged = has(yesterday);
+
   let count = 0;
+  let cursor = from;
 
   // Bounded walk — no infinite loop if the data ever gets weird.
   for (let i = 0; i < 3650; i += 1) {
-    if (!has(cursor)) break;
-    count += 1;
+    if (has(cursor)) {
+      count += 1;
+    } else if (daysAgo(cursor, from) >= STREAK_GRACE_DAYS) {
+      break; // empty and past its deadline — the run ends here
+    }
     cursor = addDays(cursor, -1);
   }
 
   return {
     count,
     todayLogged,
-    /** True when the streak survives only because today is still in progress. */
-    atRisk: count > 0 && !todayLogged,
+    yesterdayLogged,
+    /** The day whose deadline is tonight. */
+    dueDay: yesterday,
+    /** True while the streak depends on filling yesterday before midnight. */
+    atRisk: count > 0 && !yesterdayLogged,
   };
 }
 
@@ -232,19 +255,49 @@ export function streakStats(days, from = todayKey()) {
  * Gamification
  * ------------------------------------------------------------------------ */
 
+/**
+ * Milestones are a share of the user's own deficit goal rather than fixed
+ * kilos, so they scale with the target: a 12 kg goal (92,400 kcal) unlocks at
+ * 23,100 / 46,200 / 69,300.
+ */
+export const BADGE_MILESTONES = [25, 50, 75];
+
 export const BADGES = [
-  { id: 'first',    icon: '🌱', label: 'First Log',  test: (p, s) => p.loggedDays >= 1 },
-  { id: 'streak3',  icon: '🔥', label: '3 Day',      test: (p, s) => s.count >= 3 },
-  { id: 'streak7',  icon: '⚡', label: '7 Day',      test: (p, s) => s.count >= 7 },
-  { id: 'streak30', icon: '💎', label: '30 Day',     test: (p, s) => s.count >= 30 },
-  { id: 'kg1',      icon: '🥇', label: '1 kg Burnt', test: (p) => p.accrued >= KCAL_PER_KG },
-  { id: 'kg5',      icon: '🏆', label: '5 kg Burnt', test: (p) => p.accrued >= KCAL_PER_KG * 5 },
-  { id: 'half',     icon: '🌗', label: 'Halfway',    test: (p) => p.percent >= 50 },
-  { id: 'goal',     icon: '👑', label: 'Goal',       test: (p) => p.achieved },
+  { id: 'first',    icon: '🌱', label: 'First Log', test: (p) => p.loggedDays >= 1 },
+  { id: 'streak3',  icon: '🔥', label: '3 Day',     test: (p, s) => s.count >= 3 },
+  { id: 'streak7',  icon: '⚡', label: '7 Day',     test: (p, s) => s.count >= 7 },
+  { id: 'streak30', icon: '💎', label: '30 Day',    test: (p, s) => s.count >= 30 },
+
+  ...BADGE_MILESTONES.map((pct, i) => ({
+    id: `pct${pct}`,
+    icon: ['🥉', '🥈', '🥇'][i],
+    label: `${pct}%`,
+    milestone: pct,
+    // Compared against the raw totals, not the display percentage, which is
+    // clamped to [0, 100].
+    test: (p) => p.totalDeficitGoal > 0 && p.accrued >= p.totalDeficitGoal * (pct / 100),
+  })),
+
+  { id: 'goal',     icon: '👑', label: 'Goal',      test: (p) => p.achieved },
 ];
 
+/**
+ * @returns badges with `earned`, plus `target` (the kcal a milestone needs) and
+ *          a human `detail` for the tooltip.
+ */
 export function earnedBadges(progress, streak) {
-  return BADGES.map((b) => ({ ...b, earned: Boolean(b.test(progress, streak)) }));
+  return BADGES.map((badge) => {
+    const target = badge.milestone
+      ? Math.round(progress.totalDeficitGoal * (badge.milestone / 100))
+      : null;
+
+    return {
+      ...badge,
+      target,
+      earned: Boolean(badge.test(progress, streak)),
+      detail: target ? `${badge.label} of your goal — ${fmtNum(target)} kcal` : badge.label,
+    };
+  });
 }
 
 /* --------------------------------------------------------------------------

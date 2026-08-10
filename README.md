@@ -38,15 +38,33 @@ self-contained file.
 
 | Element | What it does |
 | --- | --- |
-| **Streak counter** (top left) | Consecutive days with data from *any* source. Backfilling counts, so a week logged elsewhere rebuilds it. |
+| **Streak counter** (top left) | Days with data from *any* source. Backfilling counts, so a week logged elsewhere rebuilds it. |
 | **Hero card** | Total deficit needed for the goal, with the amount banked so far in the centre of the progress ring. |
 | **To go** | Goal minus banked. Rises on surplus days. |
 | **Today** | The day's net, and which way it's pushing. |
 | **Day strip** | Horizontal, scrollable, one tile per day. Tap to log calories eaten and burned. |
-| **Achievements** | Eight badges across streaks, kilos burnt off, and goal completion. |
+| **Achievements** | Eight badges: first log, 3/7/30-day streaks, 25/50/75% of the goal, and the goal itself. |
 
-Today is a **grace day** for the streak: a run built through yesterday stays
-alive until midnight, and the header nudges you while it's at risk.
+### Streak deadlines
+
+Each day can be filled in any time up to **the end of the following day**. Whoop
+only finalises a day's calories once the cycle closes overnight, so yesterday's
+numbers usually aren't available until this morning — expecting them the same
+day would break streaks for reasons outside the user's control.
+
+So today and yesterday are both grace days: leaving them empty doesn't break
+anything. A day ends the run only once the whole of the following day has also
+passed without it being filled. Grace days are *skipped, not counted*, so the
+number always reflects days that actually hold data. While yesterday is still
+empty the header shows "Log yesterday to keep it".
+
+### Milestones
+
+Badges sit at **25%, 50% and 75% of your own deficit goal**, so they scale with
+the target rather than being fixed at some number of kilos. A 12 kg goal is
+92,400 kcal, which puts them at 23,100 / 46,200 / 69,300. Each badge's tooltip
+shows its exact threshold. They unlock on banked calories, so a net surplus
+can't trip one, and they stay locked until a goal is set.
 
 ### Profile
 

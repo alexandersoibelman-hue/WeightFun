@@ -53,8 +53,9 @@ function header(streak) {
   }, [
     el(`div.streak${cold ? '.is-cold' : ''}`, {
       title: streak.atRisk
-        ? 'Log anything today to keep the streak alive'
-        : 'Consecutive days with data from any source',
+        ? 'Fill in yesterday before midnight to keep the streak alive'
+        : 'Days with data from any source. You have until the end of the '
+          + 'following day to fill each one in.',
     }, [
       el('span.streak__flame', { text: cold ? '·' : '🔥' }),
       el('span', { text: cold ? 'No streak' : label }),
@@ -62,7 +63,7 @@ function header(streak) {
     el('div', { style: { textAlign: 'right' } }, [
       el('div', { style: { fontSize: '19px', fontWeight: '800', letterSpacing: '-.4px' }, text: 'WeightFun' }),
       streak.atRisk
-        ? el('div', { style: { fontSize: '11px', color: 'var(--warn)' }, text: 'Log today to keep it' })
+        ? el('div', { style: { fontSize: '11px', color: 'var(--warn)' }, text: 'Log yesterday to keep it' })
         : null,
     ]),
   ]);
@@ -391,7 +392,7 @@ function badgesCard(progress, streak) {
   const badges = earnedBadges(progress, streak);
   return card(null, [
     el('div.badges', {}, badges.map((b) =>
-      el(`div.badge${b.earned ? '.badge--earned' : ''}`, { title: b.label }, [
+      el(`div.badge${b.earned ? '.badge--earned' : ''}`, { title: b.detail }, [
         el('span.badge__icon', { text: b.icon }),
         el('span.badge__label', { text: b.label }),
       ])
