@@ -44,11 +44,15 @@ jobs:
       - name: Assemble the site
         run: |
           mkdir -p _site
-          cp index.html manifest.webmanifest _site/
-          cp -r styles src _site/
+          # Ship ONE self-contained file. A multi-file deploy lets a browser pair
+          # a freshly fetched page with a stylesheet it still has cached, which
+          # renders the app subtly broken; a single file cannot desynchronise.
+          npm run build:single -- _site/index.html --full
+          cp _site/index.html _site/standalone.html
+          cp manifest.webmanifest _site/
           touch _site/.nojekyll
-          # Also publish the single-file build, for anywhere that wants one file.
-          npm run build:single -- _site/standalone.html
+          # Sources published alongside for reading, not for the app to load.
+          cp -r styles src _site/
 
       - uses: actions/upload-pages-artifact@v3
         with:

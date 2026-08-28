@@ -19,7 +19,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const OUT = path.resolve(ROOT, process.argv[2] || 'dist/weightfun.html');
+const args = process.argv.slice(2);
+/**
+ * --full emits a complete HTML document, head and all, for hosting. Without it
+ * the output is a body fragment, which is what the Artifact host wants since it
+ * supplies its own <head>.
+ */
+const FULL = args.includes('--full');
+const OUT = path.resolve(ROOT, args.find((a) => !a.startsWith('--')) || 'dist/weightfun.html');
 
 /** Dependency order: a module may only rely on ones above it. */
 const MODULES = [
@@ -133,27 +140,38 @@ for (const rel of MODULES) {
 const css = await fs.readFile(path.join(ROOT, 'styles/app.css'), 'utf8');
 const html = await fs.readFile(path.join(ROOT, 'index.html'), 'utf8');
 
-const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-if (!bodyMatch) throw new Error('Could not find <body> in index.html');
+const script = `<script type="module">\n${escapeClosingTag(chunks.join('\n\n'))}\n</script>`;
+const style = `<style>\n${css.trim()}\n</style>`;
 
-const body = bodyMatch[1]
-  .replace(/\s*<script\b[^>]*><\/script>\s*/gi, '\n')
-  .trim();
+let out;
 
-const out = `<title>WeightFun</title>
-<style>
-${css.trim()}
-</style>
+if (FULL) {
+  // Keep the real document — viewport, theme-color, manifest, icons — and just
+  // inline the two external assets. One file means a browser can never pair a
+  // fresh page with a stale stylesheet.
+  out = html
+    .replace(/\s*<link rel="stylesheet"[^>]*>/i, `\n  ${style}`)
+    .replace(/\s*<script\b[^>]*src=[^>]*><\/script>/i, `\n  ${script}`);
 
-${body}
+  if (out.includes('app.css') || /<script\b[^>]*src=/i.test(out)) {
+    throw new Error('Failed to inline the stylesheet or the entry script into index.html.');
+  }
+} else {
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  if (!bodyMatch) throw new Error('Could not find <body> in index.html');
 
-<script type="module">
-${escapeClosingTag(chunks.join('\n\n'))}
-</script>
-`;
+  const body = bodyMatch[1]
+    .replace(/\s*<script\b[^>]*><\/script>\s*/gi, '\n')
+    .trim();
+
+  out = `<title>WeightFun</title>\n${style}\n\n${body}\n\n${script}\n`;
+}
 
 await fs.mkdir(path.dirname(OUT), { recursive: true });
 await fs.writeFile(OUT, out, 'utf8');
 
 const kb = (Buffer.byteLength(out) / 1024).toFixed(1);
-console.log(`Bundled ${MODULES.length} modules -> ${path.relative(ROOT, OUT)} (${kb} KB)`);
+console.log(
+  `Bundled ${MODULES.length} modules -> ${path.relative(ROOT, OUT)} (${kb} KB)`
+  + (FULL ? ' [full document]' : ' [body fragment]'),
+);

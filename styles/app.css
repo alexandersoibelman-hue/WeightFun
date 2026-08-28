@@ -648,13 +648,19 @@ input::placeholder { color: var(--fg-dim); }
 .bar {
   flex: 1 1 0;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
+  display: block;
   background: none;
   border: 0;
   padding: 0;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  font: inherit;
   -webkit-tap-highlight-color: transparent;
 }
+/* Safari does not reliably treat a <button> as a flex container — it wraps the
+   children in an anonymous box — so the column lives in a plain div inside. */
+.bar__col { display: flex; flex-direction: column; width: 100%; }
 .bar__up, .bar__down { display: flex; }
 .bar__up { align-items: flex-end; }
 .bar__down { align-items: flex-start; }
@@ -670,8 +676,16 @@ input::placeholder { color: var(--fg-dim); }
   border-radius: 0 0 3px 3px;
   background: var(--grad-danger);
 }
-/* An empty bucket still occupies its slot — the gap is the information. */
-.bar__fill--empty { background: var(--line-soft); min-height: 2px; opacity: .55; }
+/* An empty bucket still occupies its slot — the gap is the information. It sits
+   neutral at the zero line, and must out-specify `.bar__down .bar__fill`, which
+   would otherwise paint it as though it were a surplus. */
+.bar__up .bar__fill--empty,
+.bar__down .bar__fill--empty {
+  background: var(--line);
+  min-height: 2px;
+  border-radius: 2px;
+  opacity: .9;
+}
 
 .bar[aria-pressed="true"] .bar__fill { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--fg); }
 .bar:focus-visible { outline: none; }

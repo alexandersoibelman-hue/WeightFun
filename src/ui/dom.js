@@ -22,7 +22,12 @@ export function el(tag, props = {}, children = []) {
     } else if (key === 'dataset') {
       Object.assign(node.dataset, value);
     } else if (key === 'style' && typeof value === 'object') {
-      Object.assign(node.style, value);
+      for (const [prop, val] of Object.entries(value)) {
+        // Object.assign silently no-ops on custom properties — they only go
+        // through setProperty.
+        if (prop.startsWith('--')) node.style.setProperty(prop, val);
+        else node.style[prop] = val;
+      }
     } else if (key.startsWith('on') && typeof value === 'function') {
       node.addEventListener(key.slice(2).toLowerCase(), value);
     } else if (value === true) {

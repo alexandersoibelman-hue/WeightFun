@@ -159,8 +159,12 @@ function chart(series) {
         showBucket(bucket);
       },
     }, [
-      el('div.bar__up', { style: { height: `${upHeight}px` } }, [value > 0 ? fill : null]),
-      el('div.bar__down', { style: { height: `${downHeight}px` } }, [value <= 0 ? fill : null]),
+      el('div.bar__col', { style: { height: `${PLOT}px` } }, [
+        // An empty or exactly-zero bucket sits as a neutral tick on the line
+        // rather than hanging below it like a surplus.
+        el('div.bar__up', { style: { height: `${upHeight}px` } }, [value > 0 || bucket.empty || value === 0 ? fill : null]),
+        el('div.bar__down', { style: { height: `${downHeight}px` } }, [value < 0 ? fill : null]),
+      ]),
     ]);
 
     return bar;

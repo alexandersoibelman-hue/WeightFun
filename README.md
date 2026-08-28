@@ -29,8 +29,15 @@ opened directly — or use the single-file build, which has no module imports an
 opens straight off disk.
 
 `.github/workflows/pages.yml` runs the tests, then publishes the app to GitHub
-Pages. It also emits `standalone.html` next to it — the same app as one
-self-contained file.
+Pages **as a single self-contained file** — `build:single --full` inlines the
+stylesheet and the script into the real document.
+
+That is deliberate. A multi-file deploy lets a browser pair a freshly fetched
+page with a stylesheet it still has cached, and the result is not an obvious
+failure: the app renders, but anything styled by rules the cached copy predates
+silently collapses. It cost a round of debugging when new chart bars came back
+zero-width on a phone while every earlier screen looked fine. One file cannot
+desynchronise with itself.
 
 ## Screens
 
