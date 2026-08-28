@@ -710,6 +710,9 @@ input::placeholder { color: var(--fg-dim); }
 }
 .chart__tick--hidden { visibility: hidden; }
 
+/* `display: flex` would otherwise beat the UA's [hidden] rule. */
+.chart__readout[hidden] { display: none; }
+
 .chart__readout {
   display: flex;
   align-items: baseline;

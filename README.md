@@ -81,7 +81,7 @@ A dashboard over the whole history, not just the entry window.
 | --- | --- |
 | **Range picker** | Week · Month · 3M · Year. The choice is remembered. |
 | **Headline** | Total banked over the range, with average per logged day, best bucket, and days logged. |
-| **Bar chart** | Daily deficit. Deficits rise from the zero line, surplus days hang below it, and unlogged days stay as visible gaps. Tap a bar for its exact figure. |
+| **Bar chart** | Daily deficit. Deficits rise from the zero line, surplus days hang below it, and unlogged days sit as neutral ticks on the line. Tap a bar to read out its exact figure. |
 | **Podium** | The three biggest single-day deficits ever logged — all-time, so it reaches past whatever range is selected. |
 
 Longer ranges aggregate rather than drawing one bar per day, since 90 daily bars
@@ -91,6 +91,11 @@ deficit*, so a bar always means the same thing — kcal per day — and the rang
 stay comparable. That average covers only the days that hold data, so a week
 where you logged two days isn't diluted by the five you didn't; the readout
 names the count and the bucket total alongside it.
+
+The tap readout stays hidden until a bar is actually tapped. It deliberately
+does not default to today: the Home Screen already reports today's status, so
+defaulting here would restate it — and usually as an empty panel, since today
+is rarely filled in before the evening.
 
 ### Profile
 

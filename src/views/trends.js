@@ -114,9 +114,13 @@ function chart(series) {
   const upHeight = Math.round(PLOT * (maxUp / span));
   const downHeight = PLOT - upHeight;
 
-  // Readout doubles as the accessible description of the selected bar.
-  const readout = el('div.chart__readout');
+  // Only appears once a bar is tapped. It deliberately does not default to
+  // today: the Home Screen already reports today's status, so showing it here
+  // too would just restate it — usually as an empty "no data logged" panel,
+  // since today is rarely filled in before the evening.
+  const readout = el('div.chart__readout', { hidden: true });
   const showBucket = (bucket) => {
+    readout.hidden = false;
     readout.replaceChildren(
       el('div', {}, [
         el('div.chart__readout-label', { text: bucketTitle(bucket, range) }),
@@ -185,10 +189,6 @@ function chart(series) {
       { text: b.label },
     )),
   );
-
-  // Start on the most recent bucket rather than an empty readout.
-  const latest = buckets[buckets.length - 1];
-  if (latest) showBucket(latest);
 
   const gap = buckets.length > 40 ? '2px' : buckets.length > 16 ? '3px' : '5px';
 
