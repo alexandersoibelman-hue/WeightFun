@@ -31,6 +31,7 @@ const MODULES = [
   'src/state.js',
   'src/integrations/sync.js',
   'src/views/home.js',
+  'src/views/trends.js',
   'src/views/profile.js',
   'src/views/integrations.js',
   'src/main.js', // must be last: this one actually runs things

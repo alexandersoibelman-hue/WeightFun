@@ -57,6 +57,7 @@ function defaultState() {
     },
     ui: {
       selectedDay: todayKey(),
+      trendRange: 'week',
       onboarded: false,
     },
   };

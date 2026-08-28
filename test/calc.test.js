@@ -9,6 +9,7 @@ import {
   BACKFILL_DAYS, KCAL_PER_KG, addDays, dayKey, dayTotals, daysAgo,
   earnedBadges, goalStats, hasAnyData, isEditable, progressStats, streakStats,
   stripSyncedValues, BADGE_MILESTONES,
+  TREND_RANGES, trendSeries, topDeficitDays, firstLoggedDay, weekStart,
 } from '../src/calc.js';
 import { normalizeBridgePayload } from '../src/integrations/appleHealth.js';
 import { kilojoulesToKcal } from '../src/integrations/whoop.js';
@@ -407,4 +408,143 @@ test('the Apple bridge discards unusable samples instead of writing NaN', () => 
   });
   assert.equal(Object.values(days).length, 1);
   assert.equal(Object.values(days)[0], 250);
+});
+
+
+/* ----------------------------------------------------------------- trends */
+
+test('the week range emits one bucket per day, newest last', () => {
+  const series = trendSeries({ [day(0)]: { manualBurned: 2800, manualEaten: 2100 } }, 'week');
+  assert.equal(series.buckets.length, 7);
+  assert.equal(series.buckets.at(-1).start, day(0));
+  assert.equal(series.buckets.at(-1).value, 700);
+});
+
+test('a day bucket reports the day itself, not an average', () => {
+  const series = trendSeries({ [day(-1)]: { manualBurned: 3000, manualEaten: 2000 } }, 'week');
+  const bucket = series.buckets.find((b) => b.start === day(-1));
+  assert.equal(bucket.value, 1000);
+  assert.equal(bucket.total, 1000);
+  assert.equal(bucket.daysLogged, 1);
+});
+
+test('empty days are kept as gaps rather than dropped', () => {
+  const series = trendSeries({ [day(0)]: { manualBurned: 2500 } }, 'week');
+  assert.equal(series.buckets.length, 7);
+  assert.equal(series.buckets.filter((b) => b.empty).length, 6);
+  assert.equal(series.daysLogged, 1);
+});
+
+test('surplus days keep their sign so the chart can hang them below zero', () => {
+  const series = trendSeries({ [day(0)]: { manualEaten: 3000, manualBurned: 1200 } }, 'week');
+  assert.equal(series.buckets.at(-1).value, -1800);
+  assert.equal(series.total, -1800);
+});
+
+test('the range total sums every bucket, and the average is per logged day', () => {
+  const series = trendSeries({
+    [day(0)]: { manualBurned: 3000, manualEaten: 2000 },  // +1000
+    [day(-1)]: { manualBurned: 2500, manualEaten: 2000 }, //  +500
+    [day(-2)]: { manualBurned: 2000, manualEaten: 2000 }, //     0
+  }, 'week');
+
+  assert.equal(series.total, 1500);
+  assert.equal(series.daysLogged, 3);
+  assert.equal(series.average, 500);
+});
+
+test('an empty range reports zeroes rather than NaN', () => {
+  const series = trendSeries({}, 'month');
+  assert.equal(series.total, 0);
+  assert.equal(series.average, 0);
+  assert.equal(series.maxAbs, 0);
+  assert.equal(series.best, null);
+  assert.ok(series.buckets.every((b) => b.value === 0 && b.empty));
+});
+
+test('the 3-month range groups into weeks and the year into months', () => {
+  const quarter = trendSeries({}, 'quarter');
+  const year = trendSeries({}, 'year');
+
+  // 90 days spans 13 or 14 calendar weeks depending on where today falls.
+  assert.ok(quarter.buckets.length >= 13 && quarter.buckets.length <= 14, quarter.buckets.length);
+  // 365 days always touches 13 calendar months.
+  assert.equal(year.buckets.length, 13);
+  assert.ok(quarter.buckets.every((b) => b.id === weekStart(b.id)));
+  assert.ok(year.buckets.every((b) => /^\d{4}-\d{2}$/.test(b.id)));
+});
+
+test('an aggregated bucket averages only the days that hold data', () => {
+  // Two logged days inside one week: +1000 and +500 -> average 750, total 1500.
+  const days = {
+    [day(0)]: { manualBurned: 3000, manualEaten: 2000 },
+    [day(-1)]: { manualBurned: 2500, manualEaten: 2000 },
+  };
+  const series = trendSeries(days, 'quarter');
+  const bucket = series.buckets.find((b) => b.daysLogged > 0);
+
+  assert.equal(bucket.daysLogged, 2);
+  assert.equal(bucket.total, 1500);
+  assert.equal(bucket.value, 750, 'the five unlogged days must not dilute it');
+});
+
+test('every range id resolves, and an unknown one falls back to the week', () => {
+  for (const range of TREND_RANGES) {
+    assert.equal(trendSeries({}, range.id).range.id, range.id);
+  }
+  assert.equal(trendSeries({}, 'nonsense').range.id, 'week');
+});
+
+test('data older than the range is excluded from it but not from the podium', () => {
+  const days = { [day(-200)]: { manualBurned: 5000, manualEaten: 1000 } }; // +4000
+  assert.equal(trendSeries(days, 'week').daysLogged, 0);
+  assert.equal(trendSeries(days, 'year').daysLogged, 1);
+  assert.equal(topDeficitDays(days)[0].deficit, 4000);
+});
+
+/* ----------------------------------------------------------------- podium */
+
+test('the podium ranks the three best days of all time, best first', () => {
+  const days = {
+    [day(-1)]: { manualBurned: 3000, manualEaten: 2000 },   // +1000
+    [day(-2)]: { manualBurned: 4000, manualEaten: 1500 },   // +2500
+    [day(-3)]: { manualBurned: 2200, manualEaten: 2000 },   //  +200
+    [day(-400)]: { manualBurned: 5000, manualEaten: 1000 }, // +4000, long ago
+  };
+  const top = topDeficitDays(days, 3);
+
+  assert.deepEqual(top.map((d) => d.deficit), [4000, 2500, 1000]);
+  assert.deepEqual(top.map((d) => d.rank), [1, 2, 3]);
+  assert.equal(top[0].key, day(-400), 'all-time, so it reaches past every range');
+});
+
+test('the podium returns fewer than three when that is all there is', () => {
+  assert.equal(topDeficitDays({ [day(0)]: { manualBurned: 2500 } }, 3).length, 1);
+  assert.equal(topDeficitDays({}, 3).length, 0);
+});
+
+test('ties break on date, so the order never wobbles between renders', () => {
+  const days = {
+    [day(-1)]: { manualBurned: 3000, manualEaten: 2000 },
+    [day(-5)]: { manualBurned: 3000, manualEaten: 2000 },
+  };
+  assert.equal(topDeficitDays(days, 2)[0].key, day(-5), 'the earlier day got there first');
+});
+
+test('a podium of surplus days still ranks least-bad first', () => {
+  const days = {
+    [day(-1)]: { manualEaten: 3000, manualBurned: 1000 }, // -2000
+    [day(-2)]: { manualEaten: 3000, manualBurned: 2500 }, //  -500
+  };
+  assert.deepEqual(topDeficitDays(days, 2).map((d) => d.deficit), [-500, -2000]);
+});
+
+test('firstLoggedDay finds the oldest day holding data', () => {
+  const days = {
+    [day(-3)]: { manualBurned: 2000 },
+    [day(-10)]: { manualBurned: 2000 },
+    [day(-5)]: { manualEaten: null, manualBurned: null }, // empty husk
+  };
+  assert.equal(firstLoggedDay(days), day(-10));
+  assert.equal(firstLoggedDay({}), null);
 });

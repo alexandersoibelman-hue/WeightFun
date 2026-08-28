@@ -12,6 +12,7 @@ import { todayKey } from './calc.js';
 import { clear, el, toast } from './ui/dom.js';
 import { flushSaves, installFlushHooks } from './ui/autosave.js';
 import { renderHome } from './views/home.js';
+import { renderTrends } from './views/trends.js';
 import { renderProfile } from './views/profile.js';
 import { renderIntegrations } from './views/integrations.js';
 import { startScheduler } from './integrations/sync.js';
@@ -31,6 +32,7 @@ if (!document.querySelector('meta[name="viewport"]')) {
 
 const ROUTES = {
   home: renderHome,
+  trends: renderTrends,
   integrations: renderIntegrations,
   profile: renderProfile,
 };

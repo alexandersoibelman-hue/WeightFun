@@ -19,7 +19,7 @@ full-screen like a native app.
 
 ```bash
 npm start            # http://localhost:4173
-npm test             # 42 unit tests: calorie engine + relay helpers
+npm test             # 70 unit tests: calorie engine + relay helpers
 npm run build:single # one self-contained dist/weightfun.html
 ```
 
@@ -65,6 +65,25 @@ the target rather than being fixed at some number of kilos. A 12 kg goal is
 92,400 kcal, which puts them at 23,100 / 46,200 / 69,300. Each badge's tooltip
 shows its exact threshold. They unlock on banked calories, so a net surplus
 can't trip one, and they stay locked until a goal is set.
+
+### Trends
+
+A dashboard over the whole history, not just the entry window.
+
+| Element | What it does |
+| --- | --- |
+| **Range picker** | Week · Month · 3M · Year. The choice is remembered. |
+| **Headline** | Total banked over the range, with average per logged day, best bucket, and days logged. |
+| **Bar chart** | Daily deficit. Deficits rise from the zero line, surplus days hang below it, and unlogged days stay as visible gaps. Tap a bar for its exact figure. |
+| **Podium** | The three biggest single-day deficits ever logged — all-time, so it reaches past whatever range is selected. |
+
+Longer ranges aggregate rather than drawing one bar per day, since 90 daily bars
+on a phone would be a pixel wide each: **3M** groups into calendar weeks and
+**Year** into calendar months. Aggregated buckets show the *average daily
+deficit*, so a bar always means the same thing — kcal per day — and the ranges
+stay comparable. That average covers only the days that hold data, so a week
+where you logged two days isn't diluted by the five you didn't; the readout
+names the count and the bucket total alongside it.
 
 ### Profile
 
@@ -170,8 +189,8 @@ styles/app.css          design tokens and components
 src/
   main.js               router, render loop, app bootstrap
   state.js              localStorage store
-  calc.js               deficit maths, streaks, badges, date handling
-  views/                home · profile · integrations
+  calc.js               deficit maths, streaks, badges, trend series, dates
+  views/                home · trends · profile · integrations
   integrations/
     whoop.js            relay client + simulator
     appleHealth.js      bridge client, payload normalisation

@@ -329,3 +329,132 @@ export function fmtRelativeTime(iso) {
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
 }
+
+/* --------------------------------------------------------------------------
+ * Trends
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Ranges offered on the Trends screen.
+ *
+ * Longer ranges aggregate rather than drawing one bar per day: 90 daily bars on
+ * a phone would be a pixel wide each. Buckets always report an *average daily
+ * deficit*, so a bar means the same thing — kcal per day — whichever range is
+ * selected, and the ranges stay comparable with each other.
+ */
+export const TREND_RANGES = [
+  { id: 'week',    label: 'Week',  days: 7,   bucket: 'day' },
+  { id: 'month',   label: 'Month', days: 30,  bucket: 'day' },
+  { id: 'quarter', label: '3M',    days: 90,  bucket: 'week' },
+  { id: 'year',    label: 'Year',  days: 365, bucket: 'month' },
+];
+
+/** Monday-based start of the week containing `key`. */
+export function weekStart(key) {
+  const dow = (keyToDate(key).getDay() + 6) % 7; // Mon = 0
+  return addDays(key, -dow);
+}
+
+function bucketIdFor(key, bucket) {
+  if (bucket === 'week') return weekStart(key);
+  if (bucket === 'month') return key.slice(0, 7); // YYYY-MM
+  return key;
+}
+
+function bucketLabel(bucket, startKey, rangeDays) {
+  const date = keyToDate(bucket === 'month' ? `${startKey}-01` : startKey);
+  if (bucket === 'month') return MON[date.getMonth()];
+  if (bucket === 'week') return `${date.getDate()} ${MON[date.getMonth()]}`;
+  // Day buckets: weekday initials read better over one week, dates over a month.
+  return rangeDays <= 7 ? DOW[date.getDay()] : String(date.getDate());
+}
+
+/**
+ * Bucketed deficit history for one range.
+ *
+ * Every bucket in the window is emitted, including empty ones — a gap in the
+ * chart is information, not something to collapse away.
+ *
+ * @returns {{
+ *   range: object, buckets: Array, maxAbs: number,
+ *   total: number, daysLogged: number, average: number, best: object|null
+ * }}
+ */
+export function trendSeries(days, rangeId = 'week', from = todayKey()) {
+  const range = TREND_RANGES.find((r) => r.id === rangeId) || TREND_RANGES[0];
+  const startKey = addDays(from, -(range.days - 1));
+
+  const order = [];
+  const byId = new Map();
+
+  for (let cursor = startKey; cursor <= from; cursor = addDays(cursor, 1)) {
+    const id = bucketIdFor(cursor, range.bucket);
+
+    if (!byId.has(id)) {
+      byId.set(id, { id, start: cursor, end: cursor, total: 0, daysLogged: 0, span: 0 });
+      order.push(id);
+    }
+
+    const bucket = byId.get(id);
+    bucket.end = cursor;
+    bucket.span += 1;
+
+    const totals = dayTotals(days[cursor]);
+    if (totals.hasData) {
+      bucket.total += totals.deficit;
+      bucket.daysLogged += 1;
+    }
+  }
+
+  const buckets = order.map((id) => {
+    const b = byId.get(id);
+    // Average across days that actually hold data: a week where you logged two
+    // days shouldn't be diluted by the five you didn't.
+    const value = b.daysLogged > 0 ? Math.round(b.total / b.daysLogged) : 0;
+    return {
+      ...b,
+      value,
+      total: Math.round(b.total),
+      empty: b.daysLogged === 0,
+      label: bucketLabel(range.bucket, id, range.days),
+    };
+  });
+
+  const total = buckets.reduce((sum, b) => sum + b.total, 0);
+  const daysLogged = buckets.reduce((sum, b) => sum + b.daysLogged, 0);
+  const maxAbs = buckets.reduce((max, b) => Math.max(max, Math.abs(b.value)), 0);
+  const best = buckets.reduce(
+    (top, b) => (!b.empty && (!top || b.value > top.value) ? b : top),
+    null,
+  );
+
+  return {
+    range,
+    buckets,
+    maxAbs,
+    total: Math.round(total),
+    daysLogged,
+    average: daysLogged > 0 ? Math.round(total / daysLogged) : 0,
+    best,
+  };
+}
+
+/**
+ * Highest single-day deficits ever logged, best first — the podium.
+ * All-time by design: it ignores the selected range.
+ */
+export function topDeficitDays(days, limit = 3) {
+  return Object.entries(days)
+    .map(([key, entry]) => ({ key, ...dayTotals(entry) }))
+    .filter((d) => d.hasData)
+    // Tie-break on the date so the order is stable rather than hash-dependent.
+    .sort((a, b) => b.deficit - a.deficit || (a.key < b.key ? -1 : 1))
+    .slice(0, limit)
+    .map((d, i) => ({ rank: i + 1, key: d.key, deficit: d.deficit, eaten: d.eaten, burned: d.burned }));
+}
+
+/** Oldest day holding data, or null. Used to say how far the history goes. */
+export function firstLoggedDay(days) {
+  const keys = Object.keys(days).filter((key) => hasAnyData(days[key]));
+  return keys.length ? keys.sort()[0] : null;
+}
